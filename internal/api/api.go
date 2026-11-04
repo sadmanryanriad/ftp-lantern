@@ -68,6 +68,8 @@ type TitleCard struct {
 	ThumbURL    string `json:"thumb_url"`
 	IsFollowing bool   `json:"is_following"`
 	Category    string `json:"category"`
+	SizeBytes   int64  `json:"size_bytes"`
+	SizeHuman   string `json:"size_human"`
 }
 
 type ContinueWatchingItem struct {
@@ -147,37 +149,122 @@ func (s *Server) handleSearch(w http.ResponseWriter, r *http.Request) {
 
 	resolution := strings.TrimSpace(r.URL.Query().Get("resolution"))
 	reqType := strings.TrimSpace(r.URL.Query().Get("type"))
+	category := strings.TrimSpace(r.URL.Query().Get("category"))
+	sortParam := strings.TrimSpace(r.URL.Query().Get("sort"))
+	yearParam := strings.TrimSpace(r.URL.Query().Get("year"))
+	dateAddedParam := strings.TrimSpace(r.URL.Query().Get("date_added"))
+	followingParam := r.URL.Query().Get("following") == "true"
+
+	page, _ := strconv.Atoi(r.URL.Query().Get("page"))
+	if page <= 0 {
+		page = 1
+	}
 
 	limit, _ := strconv.Atoi(r.URL.Query().Get("limit"))
 	if limit <= 0 || limit > 100 {
 		limit = 30
 	}
+	offset := (page - 1) * limit
 
 	var results []TitleCard
+	var totalCount int
 
 	if normQuery == "" {
 		// Browsing without query
+		whereClause := " WHERE 1=1"
+		var args []interface{}
+		var countArgs []interface{}
+
+		if followingParam {
+			whereClause += " AND t.is_following = 1"
+		}
+		if resolution != "" && resolution != "All" {
+			whereClause += " AND r.resolution = ?"
+			args = append(args, resolution)
+			countArgs = append(countArgs, resolution)
+		}
+		if reqType != "" && reqType != "all" {
+			whereClause += " AND t.type = ?"
+			args = append(args, reqType)
+			countArgs = append(countArgs, reqType)
+		}
+		if category != "" && category != "All" {
+			whereClause += " AND (r.category LIKE ? OR r.folder_url LIKE ?)"
+			args = append(args, "%"+category+"%", "%"+category+"%")
+			countArgs = append(countArgs, "%"+category+"%", "%"+category+"%")
+		}
+		if yearParam != "" && yearParam != "All" {
+			if strings.Contains(yearParam, "-") {
+				parts := strings.Split(yearParam, "-")
+				if len(parts) == 2 {
+					yMin, _ := strconv.Atoi(parts[0])
+					yMax, _ := strconv.Atoi(parts[1])
+					if yMin > 0 && yMax >= yMin {
+						whereClause += " AND t.year BETWEEN ? AND ?"
+						args = append(args, yMin, yMax)
+						countArgs = append(countArgs, yMin, yMax)
+					}
+				}
+			} else if strings.HasPrefix(yearParam, "<") {
+				yMax, _ := strconv.Atoi(strings.TrimPrefix(yearParam, "<"))
+				if yMax > 0 {
+					whereClause += " AND t.year > 0 AND t.year < ?"
+					args = append(args, yMax)
+					countArgs = append(countArgs, yMax)
+				}
+			} else {
+				y, _ := strconv.Atoi(yearParam)
+				if y > 0 {
+					whereClause += " AND t.year = ?"
+					args = append(args, y)
+					countArgs = append(countArgs, y)
+				}
+			}
+		}
+		if dateAddedParam != "" && dateAddedParam != "all" {
+			switch dateAddedParam {
+			case "today":
+				whereClause += " AND t.first_seen >= date('now', 'start of day')"
+			case "7d", "week":
+				whereClause += " AND t.first_seen >= datetime('now', '-7 days')"
+			case "30d", "month":
+				whereClause += " AND t.first_seen >= datetime('now', '-30 days')"
+			case "90d", "3months":
+				whereClause += " AND t.first_seen >= datetime('now', '-90 days')"
+			}
+		}
+
+		// Count query
+		countSQL := `
+			SELECT COUNT(DISTINCT t.id)
+			FROM titles t
+			LEFT JOIN releases r ON r.title_id = t.id AND r.gone_at IS NULL
+		` + whereClause
+		_ = s.database.QueryRow(countSQL, countArgs...).Scan(&totalCount)
+
+		// Main query
+		orderBy := " ORDER BY t.last_modified DESC, t.id DESC"
+		if sortParam == "year" || sortParam == "year_desc" {
+			orderBy = " ORDER BY t.year DESC, t.name ASC"
+		} else if sortParam == "year_asc" {
+			orderBy = " ORDER BY t.year ASC, t.name ASC"
+		} else if sortParam == "name" || sortParam == "name_asc" {
+			orderBy = " ORDER BY t.name ASC"
+		} else if sortParam == "name_desc" {
+			orderBy = " ORDER BY t.name DESC"
+		}
+
 		sqlQuery := `
 			SELECT t.id, t.name, t.year, t.type, COALESCE(t.poster_url, ''), COALESCE(t.thumb_hash, ''), t.is_following,
 			       COALESCE(MAX(r.resolution), 'Unknown') as resolution,
 			       COALESCE(MAX(r.source), 'Unknown') as source,
 			       COALESCE(MAX(r.has_hdr), 0) as has_hdr,
-			       COALESCE(MAX(r.category), '') as category
+			       COALESCE(MAX(r.category), '') as category,
+			       COALESCE((SELECT SUM(f.file_size_bytes) FROM files f WHERE f.title_id = t.id AND f.gone_at IS NULL), 0) as size_bytes
 			FROM titles t
 			LEFT JOIN releases r ON r.title_id = t.id AND r.gone_at IS NULL
-			WHERE 1=1
-		`
-		var args []interface{}
-		if resolution != "" {
-			sqlQuery += " AND r.resolution = ?"
-			args = append(args, resolution)
-		}
-		if reqType != "" {
-			sqlQuery += " AND t.type = ?"
-			args = append(args, reqType)
-		}
-		sqlQuery += " GROUP BY t.id ORDER BY t.last_modified DESC, t.id DESC LIMIT ?"
-		args = append(args, limit)
+		` + whereClause + " GROUP BY t.id " + orderBy + " LIMIT ? OFFSET ?"
+		args = append(args, limit, offset)
 
 		rows, err := s.database.Query(sqlQuery, args...)
 		if err == nil {
@@ -186,8 +273,11 @@ func (s *Server) handleSearch(w http.ResponseWriter, r *http.Request) {
 				var tc TitleCard
 				var thumbHash string
 				var hasHDRInt int
-				_ = rows.Scan(&tc.ID, &tc.Name, &tc.Year, &tc.Type, &tc.PosterURL, &thumbHash, &tc.IsFollowing, &tc.Resolution, &tc.Source, &hasHDRInt, &tc.Category)
+				_ = rows.Scan(&tc.ID, &tc.Name, &tc.Year, &tc.Type, &tc.PosterURL, &thumbHash, &tc.IsFollowing, &tc.Resolution, &tc.Source, &hasHDRInt, &tc.Category, &tc.SizeBytes)
 				tc.HasHDR = (hasHDRInt == 1)
+				if tc.SizeBytes > 0 {
+					tc.SizeHuman = formatBytes(tc.SizeBytes)
+				}
 				if thumbHash != "" {
 					tc.ThumbURL = fmt.Sprintf("/api/thumbs/%d-%s.jpg", tc.ID, thumbHash)
 				}
@@ -200,7 +290,7 @@ func (s *Server) handleSearch(w http.ResponseWriter, r *http.Request) {
 
 		if len(normQuery) < 3 {
 			// Prefix search for short query
-			rows, err := s.database.Query("SELECT id FROM titles WHERE name_norm LIKE ? || '%' LIMIT ?", normQuery, limit)
+			rows, err := s.database.Query("SELECT id FROM titles WHERE name_norm LIKE ? || '%' LIMIT 100", normQuery)
 			if err == nil {
 				defer rows.Close()
 				for rows.Next() {
@@ -211,7 +301,7 @@ func (s *Server) handleSearch(w http.ResponseWriter, r *http.Request) {
 			}
 		} else {
 			// Trigram FTS search accelerated via parameterized LIKE
-			rows, err := s.database.Query("SELECT rowid FROM titles_fts WHERE name_norm LIKE '%' || ? || '%' LIMIT ?", normQuery, limit)
+			rows, err := s.database.Query("SELECT rowid FROM titles_fts WHERE name_norm LIKE '%' || ? || '%' LIMIT 100", normQuery)
 			if err == nil {
 				defer rows.Close()
 				for rows.Next() {
@@ -223,7 +313,7 @@ func (s *Server) handleSearch(w http.ResponseWriter, r *http.Request) {
 
 			// If < 3 hits, fallback to sliding-window Levenshtein
 			if len(titleIDs) < 3 {
-				fuzzyIDs := s.fuzzyFallback(normQuery, limit)
+				fuzzyIDs := s.fuzzyFallback(normQuery, 100)
 				existing := make(map[int64]bool)
 				for _, id := range titleIDs {
 					existing[id] = true
@@ -232,20 +322,39 @@ func (s *Server) handleSearch(w http.ResponseWriter, r *http.Request) {
 					if !existing[id] {
 						titleIDs = append(titleIDs, id)
 						existing[id] = true
-						if len(titleIDs) >= limit {
-							break
-						}
 					}
 				}
 			}
 		}
 
+		totalCount = len(titleIDs)
 		if len(titleIDs) > 0 {
-			results = s.fetchTitlesByIDs(titleIDs)
+			// Slice for pagination
+			start := offset
+			if start > len(titleIDs) {
+				start = len(titleIDs)
+			}
+			end := start + limit
+			if end > len(titleIDs) {
+				end = len(titleIDs)
+			}
+			slicedIDs := titleIDs[start:end]
+			if len(slicedIDs) > 0 {
+				results = s.fetchTitlesByIDs(slicedIDs)
+			}
 		}
 	}
 
-	writeJSON(w, results)
+	if results == nil {
+		results = []TitleCard{}
+	}
+
+	writeJSON(w, map[string]interface{}{
+		"results": results,
+		"total":   totalCount,
+		"page":    page,
+		"limit":   limit,
+	})
 }
 
 func (s *Server) fuzzyFallback(query string, limit int) []int64 {
@@ -288,7 +397,8 @@ func (s *Server) fetchTitlesByIDs(ids []int64) []TitleCard {
 		       COALESCE(MAX(r.resolution), 'Unknown') as resolution,
 		       COALESCE(MAX(r.source), 'Unknown') as source,
 		       COALESCE(MAX(r.has_hdr), 0) as has_hdr,
-		       COALESCE(MAX(r.category), '') as category
+		       COALESCE(MAX(r.category), '') as category,
+		       COALESCE((SELECT SUM(f.file_size_bytes) FROM files f WHERE f.title_id = t.id AND f.gone_at IS NULL), 0) as size_bytes
 		FROM titles t
 		LEFT JOIN releases r ON r.title_id = t.id AND r.gone_at IS NULL
 		WHERE t.id IN (%s)
@@ -306,8 +416,11 @@ func (s *Server) fetchTitlesByIDs(ids []int64) []TitleCard {
 		var tc TitleCard
 		var thumbHash string
 		var hasHDRInt int
-		_ = rows.Scan(&tc.ID, &tc.Name, &tc.Year, &tc.Type, &tc.PosterURL, &thumbHash, &tc.IsFollowing, &tc.Resolution, &tc.Source, &hasHDRInt, &tc.Category)
+		_ = rows.Scan(&tc.ID, &tc.Name, &tc.Year, &tc.Type, &tc.PosterURL, &thumbHash, &tc.IsFollowing, &tc.Resolution, &tc.Source, &hasHDRInt, &tc.Category, &tc.SizeBytes)
 		tc.HasHDR = (hasHDRInt == 1)
+		if tc.SizeBytes > 0 {
+			tc.SizeHuman = formatBytes(tc.SizeBytes)
+		}
 		if thumbHash != "" {
 			tc.ThumbURL = fmt.Sprintf("/api/thumbs/%d-%s.jpg", tc.ID, thumbHash)
 		}
@@ -482,7 +595,8 @@ func (s *Server) handleWhatsNew(w http.ResponseWriter, r *http.Request) {
 	rows, err := s.database.Query(`
 		SELECT t.id, t.name, t.year, t.type, COALESCE(t.poster_url, ''), COALESCE(t.thumb_hash, ''),
 		       COALESCE(MAX(r.resolution), 'Unknown'), COALESCE(MAX(r.source), 'Unknown'),
-		       COALESCE(MAX(r.has_hdr), 0), COALESCE(MAX(r.category), '')
+		       COALESCE(MAX(r.has_hdr), 0), COALESCE(MAX(r.category), ''),
+		       COALESCE((SELECT SUM(f.file_size_bytes) FROM files f WHERE f.title_id = t.id AND f.gone_at IS NULL), 0) as size_bytes
 		FROM titles t
 		JOIN releases r ON r.title_id = t.id AND r.gone_at IS NULL
 		GROUP BY t.id
@@ -500,8 +614,11 @@ func (s *Server) handleWhatsNew(w http.ResponseWriter, r *http.Request) {
 		var tc TitleCard
 		var thumbHash string
 		var hasHDRInt int
-		_ = rows.Scan(&tc.ID, &tc.Name, &tc.Year, &tc.Type, &tc.PosterURL, &thumbHash, &tc.Resolution, &tc.Source, &hasHDRInt, &tc.Category)
+		_ = rows.Scan(&tc.ID, &tc.Name, &tc.Year, &tc.Type, &tc.PosterURL, &thumbHash, &tc.Resolution, &tc.Source, &hasHDRInt, &tc.Category, &tc.SizeBytes)
 		tc.HasHDR = (hasHDRInt == 1)
+		if tc.SizeBytes > 0 {
+			tc.SizeHuman = formatBytes(tc.SizeBytes)
+		}
 		if thumbHash != "" {
 			tc.ThumbURL = fmt.Sprintf("/api/thumbs/%d-%s.jpg", tc.ID, thumbHash)
 		}
@@ -568,7 +685,9 @@ func (s *Server) handleSingleFilePlaylist(w http.ResponseWriter, r *http.Request
 	playlist := player.BuildSingleFilePlaylist(f.TitleName, f)
 
 	w.Header().Set("Content-Type", "audio/x-mpegurl; charset=utf-8")
-	w.Header().Set("Content-Disposition", fmt.Sprintf("attachment; filename=\"%s.m3u\"", f.FileName))
+	w.Header().Set("X-Content-Type-Options", "nosniff")
+	cleanFilename := strings.ReplaceAll(f.FileName, `"`, `_`)
+	w.Header().Set("Content-Disposition", fmt.Sprintf("attachment; filename=\"%s.m3u\"", cleanFilename))
 	w.Write([]byte(playlist))
 }
 
@@ -637,7 +756,9 @@ func (s *Server) handleSeasonPlaylist(w http.ResponseWriter, r *http.Request) {
 	playlist := player.BuildSeasonPlaylist(titleName, files)
 
 	w.Header().Set("Content-Type", "audio/x-mpegurl; charset=utf-8")
-	w.Header().Set("Content-Disposition", fmt.Sprintf("attachment; filename=\"%s - Complete Season.m3u\"", titleName))
+	w.Header().Set("X-Content-Type-Options", "nosniff")
+	cleanTitleName := strings.ReplaceAll(titleName, `"`, `_`)
+	w.Header().Set("Content-Disposition", fmt.Sprintf("attachment; filename=\"%s - Complete Season.m3u\"", cleanTitleName))
 	w.Write([]byte(playlist))
 }
 
@@ -715,6 +836,15 @@ func (s *Server) handleStatus(w http.ResponseWriter, r *http.Request) {
 	var releaseCount int
 	_ = s.database.QueryRow("SELECT COUNT(*) FROM releases WHERE gone_at IS NULL").Scan(&releaseCount)
 
+	var moviesCount, seriesCount, othersCount int
+	_ = s.database.QueryRow(`
+		SELECT
+			COALESCE(SUM(CASE WHEN type = 'movie' THEN 1 ELSE 0 END), 0),
+			COALESCE(SUM(CASE WHEN type = 'series' THEN 1 ELSE 0 END), 0),
+			COALESCE(SUM(CASE WHEN type NOT IN ('movie', 'series') THEN 1 ELSE 0 END), 0)
+		FROM titles
+	`).Scan(&moviesCount, &seriesCount, &othersCount)
+
 	// Check ISP gateway reachability
 	ispConnected := false
 	if len(s.cfg.SourceURLs) > 0 {
@@ -730,23 +860,52 @@ func (s *Server) handleStatus(w http.ResponseWriter, r *http.Request) {
 	runtime.ReadMemStats(&m)
 
 	lastCrawl := s.database.GetSetting("last_crawl_time", "")
+	telemetry := s.crawler.GetTelemetry()
+
+	var dbSizeBytes int64
+	dbPath := filepath.Join(s.cfg.DataDir, "lantern.db")
+	if fi, err := os.Stat(dbPath); err == nil {
+		dbSizeBytes = fi.Size()
+	}
+
+	var thumbsSizeBytes int64
+	if entries, err := os.ReadDir(s.cfg.ThumbsDir); err == nil {
+		for _, e := range entries {
+			if fi, err := e.Info(); err == nil {
+				thumbsSizeBytes += fi.Size()
+			}
+		}
+	}
 
 	writeJSON(w, map[string]interface{}{
-		"status":           "ok",
-		"bdix_connected":   ispConnected,
-		"isp_connected":    ispConnected,
-		"titles_count":     titleCount,
-		"files_count":      fileCount,
-		"releases_count":   releaseCount,
-		"uptime":           time.Since(s.startTime).String(),
-		"uptime_seconds":   int64(time.Since(s.startTime).Seconds()),
-		"memory_alloc_mb":  float64(m.Alloc) / (1024 * 1024),
-		"memory_sys_mb":    float64(m.Sys) / (1024 * 1024),
-		"goroutines_count": runtime.NumGoroutine(),
-		"last_scan_at":     lastCrawl,
-		"is_crawling":      s.crawler.IsCrawling(),
-		"ram_alloc_mb":     fmt.Sprintf("%.2f MB", float64(m.Alloc)/(1024*1024)),
-		"ram_sys_mb":       fmt.Sprintf("%.2f MB", float64(m.Sys)/(1024*1024)),
+		"status":                  "ok",
+		"bdix_connected":          ispConnected,
+		"isp_connected":           ispConnected,
+		"titles_count":            titleCount,
+		"files_count":             fileCount,
+		"releases_count":          releaseCount,
+		"movies_count":            moviesCount,
+		"series_count":            seriesCount,
+		"others_count":            othersCount,
+		"uptime":                  time.Since(s.startTime).String(),
+		"uptime_seconds":          int64(time.Since(s.startTime).Seconds()),
+		"memory_alloc_mb":         float64(m.Alloc) / (1024 * 1024),
+		"memory_sys_mb":           float64(m.Sys) / (1024 * 1024),
+		"goroutines_count":        runtime.NumGoroutine(),
+		"last_scan_at":            lastCrawl,
+		"is_crawling":             telemetry.IsCrawling,
+		"current_source":          telemetry.CurrentSource,
+		"current_folder":          telemetry.CurrentFolder,
+		"files_indexed_session":   telemetry.FilesIndexedSession,
+		"folders_indexed_session": telemetry.FoldersIndexedSession,
+		"items_per_second":        telemetry.ItemsPerSecond,
+		"last_scan_duration_sec":  telemetry.LastScanDurationSec,
+		"db_size_bytes":           dbSizeBytes,
+		"db_size_human":           formatBytes(dbSizeBytes),
+		"thumbs_size_bytes":       thumbsSizeBytes,
+		"thumbs_size_human":       formatBytes(thumbsSizeBytes),
+		"ram_alloc_mb":            fmt.Sprintf("%.2f MB", float64(m.Alloc)/(1024*1024)),
+		"ram_sys_mb":              fmt.Sprintf("%.2f MB", float64(m.Sys)/(1024*1024)),
 	})
 }
 

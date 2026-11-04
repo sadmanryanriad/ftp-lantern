@@ -10,7 +10,6 @@ import (
 	"os"
 	"os/signal"
 	"path/filepath"
-	"strconv"
 	"syscall"
 	"time"
 	_ "time/tzdata"
@@ -138,34 +137,67 @@ func main() {
 }
 
 func runScheduler(database *db.DB, c *crawler.Crawler, notif *notifier.Notifier, cfg *config.Config, stop <-chan struct{}) {
-	ticker := time.NewTicker(1 * time.Minute)
+	ticker := time.NewTicker(30 * time.Second)
 	defer ticker.Stop()
 
-	var lastRun time.Time
+	loc, err := time.LoadLocation("Asia/Dhaka")
+	if err != nil {
+		loc = time.Local
+	}
+
+	var lastDailyCrawlDay int = -1
+	var lastDailyDigestDay int = -1
+	var lastTurboCrawl time.Time
 
 	for {
 		select {
 		case <-stop:
 			return
 		case now := <-ticker.C:
-			// Check if Turbo Mode is active
-			intervalMinutes := cfg.BaseCrawlIntervalMinutes
+			nowLocal := now.In(loc)
+			currentDay := nowLocal.YearDay()
+
+			// 1. Check if Turbo Mode is active
+			isTurbo := false
 			turboUntil := database.GetSetting("turbo_until", "")
 			if turboUntil != "" {
 				if t, err := time.Parse(time.RFC3339, turboUntil); err == nil && now.Before(t) {
-					turboMin, _ := strconv.Atoi(database.GetSetting("turbo_interval_minutes", "15"))
-					if turboMin > 0 {
-						intervalMinutes = turboMin
-					}
+					isTurbo = true
 				}
 			}
 
-			if lastRun.IsZero() || now.Sub(lastRun) >= time.Duration(intervalMinutes)*time.Minute {
-				lastRun = now
+			if isTurbo {
+				// Turbo mode: crawl every 15 minutes
+				if lastTurboCrawl.IsZero() || now.Sub(lastTurboCrawl) >= 15*time.Minute {
+					lastTurboCrawl = now
+					go func() {
+						log.Printf("[Scheduler] Turbo crawl starting (15m interval)")
+						if err := c.Crawl(cfg.SourceURLs); err == nil {
+							// Send instant alert for any followed series
+							notif.DispatchFollowedEvents()
+						}
+					}()
+				}
+			} else {
+				// Normal daily schedule: crawl at 07:00 AM Asia/Dhaka
+				if nowLocal.Hour() == 7 && nowLocal.Minute() == 0 && lastDailyCrawlDay != currentDay {
+					lastDailyCrawlDay = currentDay
+					go func() {
+						log.Printf("[Scheduler] Daily scheduled crawl starting at 07:00 AM")
+						if err := c.Crawl(cfg.SourceURLs); err == nil {
+							// Send instant alert for any followed series
+							notif.DispatchFollowedEvents()
+						}
+					}()
+				}
+			}
+
+			// 2. Daily Morning Digest at 08:01 AM Asia/Dhaka
+			if nowLocal.Hour() == 8 && nowLocal.Minute() == 1 && lastDailyDigestDay != currentDay {
+				lastDailyDigestDay = currentDay
 				go func() {
-					if err := c.Crawl(cfg.SourceURLs); err == nil {
-						notif.DispatchEvents()
-					}
+					log.Printf("[Scheduler] Daily morning digest dispatching at 08:01 AM")
+					notif.DispatchDailyDigest()
 				}()
 			}
 		}

@@ -29,13 +29,31 @@ type DirItem struct {
 	IsDir        bool
 }
 
+type CrawlerTelemetry struct {
+	IsCrawling            bool      `json:"is_crawling"`
+	CurrentSource         string    `json:"current_source"`
+	CurrentFolder         string    `json:"current_folder"`
+	FilesIndexedSession   int64     `json:"files_indexed_session"`
+	FoldersIndexedSession int64     `json:"folders_indexed_session"`
+	ItemsPerSecond        float64   `json:"items_per_second"`
+	CrawlStartTime        time.Time `json:"crawl_start_time"`
+	LastScanDurationSec   float64   `json:"last_scan_duration_sec"`
+}
+
 type Crawler struct {
-	database   *db.DB
-	thumbsMgr  *thumbs.Manager
-	client     *http.Client
-	lock       sync.Mutex
-	isCrawling atomic.Bool
-	isSeed     bool
+	database              *db.DB
+	thumbsMgr             *thumbs.Manager
+	client                *http.Client
+	lock                  sync.Mutex
+	isCrawling            atomic.Bool
+	isSeed                bool
+	statsLock             sync.RWMutex
+	currentSource         string
+	currentFolder         string
+	filesIndexedSession   atomic.Int64
+	foldersIndexedSession atomic.Int64
+	crawlStartTime        time.Time
+	lastScanDurationSec   float64
 }
 
 func New(database *db.DB, thumbsMgr *thumbs.Manager) *Crawler {
@@ -108,6 +126,32 @@ func (c *Crawler) IsCrawling() bool {
 	return c.isCrawling.Load()
 }
 
+func (c *Crawler) GetTelemetry() CrawlerTelemetry {
+	c.statsLock.RLock()
+	defer c.statsLock.RUnlock()
+
+	isCrawling := c.isCrawling.Load()
+	files := c.filesIndexedSession.Load()
+	var speed float64
+	if isCrawling && !c.crawlStartTime.IsZero() {
+		elapsed := time.Since(c.crawlStartTime).Seconds()
+		if elapsed > 0.5 {
+			speed = float64(files) / elapsed
+		}
+	}
+
+	return CrawlerTelemetry{
+		IsCrawling:            isCrawling,
+		CurrentSource:         c.currentSource,
+		CurrentFolder:         c.currentFolder,
+		FilesIndexedSession:   files,
+		FoldersIndexedSession: c.foldersIndexedSession.Load(),
+		ItemsPerSecond:        speed,
+		CrawlStartTime:        c.crawlStartTime,
+		LastScanDurationSec:   c.lastScanDurationSec,
+	}
+}
+
 func (c *Crawler) Crawl(sourceURLs []string) error {
 	if !c.lock.TryLock() {
 		return ErrAlreadyRunning
@@ -121,6 +165,12 @@ func (c *Crawler) Crawl(sourceURLs []string) error {
 	totalTitles, _ := c.database.TitleCount()
 	c.isSeed = (totalTitles == 0)
 
+	c.statsLock.Lock()
+	c.crawlStartTime = startTime
+	c.statsLock.Unlock()
+	c.filesIndexedSession.Store(0)
+	c.foldersIndexedSession.Store(0)
+
 	log.Printf("[Crawler] Starting crawl (isSeed=%v, sources=%d)", c.isSeed, len(sourceURLs))
 
 	for _, sourceURL := range sourceURLs {
@@ -133,32 +183,109 @@ func (c *Crawler) Crawl(sourceURLs []string) error {
 	c.crawlHotSet()
 
 	_ = c.database.SetLastCrawlTime(time.Now())
-	log.Printf("[Crawler] Crawl finished in %v", time.Since(startTime))
+	duration := time.Since(startTime)
+	c.statsLock.Lock()
+	c.lastScanDurationSec = duration.Seconds()
+	c.currentSource = ""
+	c.currentFolder = ""
+	c.statsLock.Unlock()
+
+	log.Printf("[Crawler] Crawl finished in %v (indexed %d files)", duration, c.filesIndexedSession.Load())
 	return nil
 }
 
+func DeriveCanonicalCategory(rawURL string) string {
+	decoded, _ := url.PathUnescape(rawURL)
+	lower := strings.ToLower(decoded)
+	if strings.Contains(lower, "1080p") && strings.Contains(lower, "english") {
+		return "English Movies (1080p)"
+	} else if strings.Contains(lower, "english movies") {
+		return "English Movies"
+	} else if strings.Contains(lower, "hindi dubbed") {
+		return "South Movies (Hindi Dubbed)"
+	} else if strings.Contains(lower, "south movies") || strings.Contains(lower, "south indian") {
+		return "South Indian Movies"
+	} else if strings.Contains(lower, "hindi movies") {
+		return "Hindi Movies"
+	} else if strings.Contains(lower, "kolkata bangla") || strings.Contains(lower, "satyajit") {
+		return "Bangla Movies"
+	} else if strings.Contains(lower, "animation movies") {
+		return "Animation Movies"
+	} else if strings.Contains(lower, "foreign language") {
+		return "Foreign Movies"
+	} else if strings.Contains(lower, "top-250") || strings.Contains(lower, "top 250") {
+		return "IMDb Top-250"
+	} else if strings.Contains(lower, "korean") {
+		return "Korean Series"
+	} else if strings.Contains(lower, "anime") || strings.Contains(lower, "cartoon") {
+		return "Anime & Cartoons"
+	} else if strings.Contains(lower, "documentary") {
+		return "Documentaries"
+	} else if strings.Contains(lower, "wrestling") || strings.Contains(lower, "wwe") {
+		return "Wrestling"
+	} else if strings.Contains(lower, "awards") || strings.Contains(lower, "tv shows") {
+		return "Awards & TV Shows"
+	} else if strings.Contains(lower, "tv-web-series") || strings.Contains(lower, "tv series") {
+		return "TV-WEB-Series"
+	}
+
+	u, err := url.Parse(rawURL)
+	if err == nil {
+		parts := strings.Split(strings.Trim(u.Path, "/"), "/")
+		if len(parts) > 0 {
+			last := parts[len(parts)-1]
+			if last != "" {
+				return last
+			}
+		}
+	}
+	return "General"
+}
+
+func IsSeriesCategory(catName string) bool {
+	lower := strings.ToLower(catName)
+	return strings.Contains(lower, "series") ||
+		strings.Contains(lower, "korean") ||
+		strings.Contains(lower, "anime") ||
+		strings.Contains(lower, "cartoon") ||
+		strings.Contains(lower, "documentar") ||
+		strings.Contains(lower, "wrestling") ||
+		strings.Contains(lower, "tv shows")
+}
+
 func (c *Crawler) crawlSource(sourceURL string) error {
+	canonicalCategory := DeriveCanonicalCategory(sourceURL)
+	c.statsLock.Lock()
+	c.currentSource = canonicalCategory
+	c.statsLock.Unlock()
+
 	categories, err := c.FetchDir(sourceURL)
 	if err != nil {
 		return err
 	}
+	c.foldersIndexedSession.Add(1)
 
 	for _, cat := range categories {
 		if !cat.IsDir {
 			continue
 		}
-		c.crawlCategory(cat.Name, cat.URL)
+		c.crawlCategory(canonicalCategory, cat.Name, cat.URL)
 	}
 
 	return nil
 }
 
-func (c *Crawler) crawlCategory(categoryName, categoryURL string) {
+func (c *Crawler) crawlCategory(canonicalCategory, folderName, categoryURL string) {
+	c.statsLock.Lock()
+	c.currentSource = canonicalCategory
+	c.statsLock.Unlock()
+
 	titles, err := c.FetchDir(categoryURL)
 	if err != nil {
-		log.Printf("[Crawler] Failed to fetch category %s: %v", categoryName, err)
+		log.Printf("[Crawler] Failed to fetch category %s (%s): %v", canonicalCategory, categoryURL, err)
 		return
 	}
+	c.foldersIndexedSession.Add(1)
 
 	for _, it := range titles {
 		if !it.IsDir {
@@ -177,15 +304,20 @@ func (c *Crawler) crawlCategory(categoryName, categoryURL string) {
 				continue
 			}
 			// Title folder mtime changed! (New season added to title)
-			c.crawlTitleFolder(categoryName, it, releaseID)
+			c.crawlTitleFolder(canonicalCategory, it, releaseID)
 		} else {
 			// Brand new release
-			c.crawlTitleFolder(categoryName, it, 0)
+			c.crawlTitleFolder(canonicalCategory, it, 0)
 		}
 	}
 }
 
 func (c *Crawler) crawlTitleFolder(categoryName string, it DirItem, existingReleaseID int64) {
+	c.statsLock.Lock()
+	c.currentFolder = it.Name
+	c.statsLock.Unlock()
+	c.foldersIndexedSession.Add(1)
+
 	contents, err := c.FetchDir(it.URL)
 	if err != nil {
 		log.Printf("[Crawler] Failed to read title folder %s: %v", it.URL, err)
@@ -193,7 +325,9 @@ func (c *Crawler) crawlTitleFolder(categoryName string, it DirItem, existingRele
 	}
 
 	meta := parser.ParseFolderMetadata(it.Name)
-	if strings.Contains(strings.ToLower(categoryName), "movie") || strings.Contains(strings.ToLower(it.URL), "movie") {
+	if IsSeriesCategory(categoryName) {
+		meta.Type = "series"
+	} else {
 		meta.Type = "movie"
 	}
 
@@ -331,6 +465,7 @@ func (c *Crawler) ingestFiles(titleID, releaseID int64, seasonNum int, files []D
 		)
 		if err == nil {
 			newFiles = append(newFiles, epCode)
+			c.filesIndexedSession.Add(1)
 		}
 	}
 

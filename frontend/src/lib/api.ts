@@ -14,11 +14,23 @@ export async function fetchScheduler(): Promise<SchedulerStatus> {
   return res.json();
 }
 
+export function displayTitleWithYear(name: string, year?: number): string {
+  if (!name) return '';
+  if (year && year > 0 && !name.includes(`(${year})`)) {
+    return `${name} (${year})`;
+  }
+  return name;
+}
+
 export async function searchTitles(params: {
   q?: string;
   resolution?: string;
   source?: string;
   type?: string;
+  category?: string;
+  year?: string;
+  date_added?: string;
+  following?: boolean;
   page?: number;
   limit?: number;
   sort?: string;
@@ -28,6 +40,10 @@ export async function searchTitles(params: {
   if (params.resolution && params.resolution !== 'All') query.set('resolution', params.resolution);
   if (params.source) query.set('source', params.source);
   if (params.type && params.type !== 'all') query.set('type', params.type);
+  if (params.category && params.category !== 'All') query.set('category', params.category);
+  if (params.year && params.year !== 'All') query.set('year', params.year);
+  if (params.date_added && params.date_added !== 'all') query.set('date_added', params.date_added);
+  if (params.following) query.set('following', 'true');
   if (params.page) query.set('page', params.page.toString());
   if (params.limit) query.set('limit', params.limit.toString());
   if (params.sort) query.set('sort', params.sort);
@@ -151,6 +167,22 @@ export function playOnAndroid(fileId: number, streamUrl: string, titleName: stri
   recordPlay(fileId);
   const intent = getAndroidIntentUrl(streamUrl, titleName);
   window.location.href = intent;
+}
+
+export function playOnPotPlayer(streamUrl: string, fileId?: number): void {
+  if (fileId) {
+    recordPlay(fileId);
+  }
+  // Native PotPlayer URI scheme
+  window.location.href = `potplayer://${streamUrl}`;
+}
+
+export function playOnVLC(streamUrl: string, fileId?: number): void {
+  if (fileId) {
+    recordPlay(fileId);
+  }
+  // Native VLC URI scheme
+  window.location.href = `vlc://${streamUrl}`;
 }
 
 export function downloadM3U(url: string, fileId?: number): void {

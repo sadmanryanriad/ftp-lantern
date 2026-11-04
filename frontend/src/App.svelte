@@ -4,10 +4,12 @@
   import SearchBar from './lib/components/SearchBar.svelte';
   import ContinueWatching from './lib/components/ContinueWatching.svelte';
   import WhatsNew from './lib/components/WhatsNew.svelte';
+  import MediaShelf from './lib/components/MediaShelf.svelte';
   import PosterGrid from './lib/components/PosterGrid.svelte';
   import TitleDetailModal from './lib/components/TitleDetailModal.svelte';
   import SettingsModal from './lib/components/SettingsModal.svelte';
   import VideoPreviewModal from './lib/components/VideoPreviewModal.svelte';
+  import { Star, Film, Tv, Sparkles, Compass, ArrowLeft } from '@lucide/svelte';
 
   import type {
     Title,
@@ -24,31 +26,66 @@
     fetchContinueWatching,
     searchTitles,
     fetchTitleDetail,
-    downloadM3U,
-    playOnAndroid
+    downloadM3U
   } from './lib/api';
 
-  // Global state using Svelte 5 runes
+  // Global state
   let status = $state<SystemStatus | null>(null);
   let scheduler = $state<SchedulerStatus | null>(null);
   let whatsNew = $state<Title[]>([]);
   let continueWatching = $state<ContinueWatchingItem[]>([]);
+  
+  // Home block shelves data
+  let homeMovies = $state<Title[]>([]);
+  let homeMovieCategory = $state<string>('All');
+  let homeSeries = $state<Title[]>([]);
+  let homeSeriesCategory = $state<string>('All');
+
+  // Dedicated Views / Main Grid state
+  let activeTab = $state<string>('home'); // 'home' | 'movies' | 'series' | 'anime' | 'documentary' | 'following'
   let titles = $state<Title[]>([]);
   let totalTitles = $state<number>(0);
   let loadingGrid = $state<boolean>(false);
 
   // Filters & Search
-  let activeFilter = $state<string>('All');
+  let activeFilter = $state<string>('All'); // Resolution filter: All, 4K, 1080p, 720p
+  let activeCategory = $state<string>('All');
+  let activeYear = $state<string>('All');
+  let activeDateAdded = $state<string>('all');
   let activeSort = $state<string>('recent');
   let searchQuery = $state<string>('');
   let currentPage = $state<number>(1);
   const pageSize = 24;
 
-  // Modals
+  // Modals state
   let selectedTitleDetail = $state<TitleDetail | null>(null);
   let previewFile = $state<MediaFile | null>(null);
   let previewTitleName = $state<string>('');
   let isSettingsOpen = $state<boolean>(false);
+
+  // ISP Category Definitions
+  const movieCategories = [
+    'All',
+    'English Movies (1080p)',
+    'English Movies',
+    'Hindi Movies',
+    'South Movies (Hindi Dubbed)',
+    'South Indian Movies',
+    'Bangla Movies',
+    'Animation Movies',
+    'IMDb Top-250',
+    'Foreign Movies'
+  ];
+
+  const seriesCategories = [
+    'All',
+    'TV-WEB-Series',
+    'Korean Series',
+    'Anime & Cartoons',
+    'Documentaries',
+    'Wrestling',
+    'Awards & TV Shows'
+  ];
 
   async function loadSystemHealth() {
     try {
@@ -62,14 +99,48 @@
 
   async function loadShelves() {
     try {
-      const [wnRes, cwRes] = await Promise.allSettled([
+      const [wnRes, cwRes, movRes, serRes] = await Promise.allSettled([
         fetchWhatsNew(16),
-        fetchContinueWatching()
+        fetchContinueWatching(),
+        searchTitles({ type: 'movie', limit: 16, sort: 'recent' }),
+        searchTitles({ type: 'series', limit: 16, sort: 'recent' })
       ]);
       if (wnRes.status === 'fulfilled') whatsNew = wnRes.value;
       if (cwRes.status === 'fulfilled') continueWatching = cwRes.value;
+      if (movRes.status === 'fulfilled') homeMovies = movRes.value.results || [];
+      if (serRes.status === 'fulfilled') homeSeries = serRes.value.results || [];
     } catch (err) {
       console.warn('Shelves load error:', err);
+    }
+  }
+
+  async function handleHomeMovieCategoryChange(cat: string) {
+    homeMovieCategory = cat;
+    try {
+      const res = await searchTitles({
+        type: 'movie',
+        category: cat !== 'All' ? cat : undefined,
+        limit: 16,
+        sort: 'recent'
+      });
+      homeMovies = res.results || [];
+    } catch (err) {
+      console.error('Failed to filter home movies:', err);
+    }
+  }
+
+  async function handleHomeSeriesCategoryChange(cat: string) {
+    homeSeriesCategory = cat;
+    try {
+      const res = await searchTitles({
+        type: 'series',
+        category: cat !== 'All' ? cat : undefined,
+        limit: 16,
+        sort: 'recent'
+      });
+      homeSeries = res.results || [];
+    } catch (err) {
+      console.error('Failed to filter home series:', err);
     }
   }
 
@@ -80,18 +151,29 @@
     loadingGrid = true;
     try {
       let filterType: string | undefined;
-      let filterRes: string | undefined;
+      let filterCategory = activeCategory !== 'All' ? activeCategory : undefined;
+      let isFollowingOnly = false;
 
-      if (activeFilter === 'series' || activeFilter === 'movie') {
-        filterType = activeFilter;
-      } else if (activeFilter === '4K' || activeFilter === '1080p' || activeFilter === '720p') {
-        filterRes = activeFilter;
+      if (activeTab === 'movies') {
+        filterType = 'movie';
+      } else if (activeTab === 'series') {
+        filterType = 'series';
+      } else if (activeTab === 'anime') {
+        filterCategory = 'Anime & Cartoons';
+      } else if (activeTab === 'documentary') {
+        filterCategory = 'Documentaries';
+      } else if (activeTab === 'following') {
+        isFollowingOnly = true;
       }
 
       const res = await searchTitles({
         q: searchQuery || undefined,
         type: filterType,
-        resolution: filterRes,
+        category: filterCategory,
+        resolution: activeFilter !== 'All' ? activeFilter : undefined,
+        year: activeYear !== 'All' ? activeYear : undefined,
+        date_added: activeDateAdded !== 'all' ? activeDateAdded : undefined,
+        following: isFollowingOnly || undefined,
         sort: activeSort,
         page: currentPage,
         limit: pageSize,
@@ -111,8 +193,42 @@
     }
   }
 
+  // Route & Navigation handlers
+  function navigateToTab(tab: string, pushHistory = true) {
+    activeTab = tab;
+    searchQuery = '';
+    activeCategory = 'All';
+    activeFilter = 'All';
+    activeYear = 'All';
+    activeDateAdded = 'all';
+
+    if (pushHistory) {
+      const hash = tab === 'home' ? '#/' : `#/${tab}`;
+      window.history.pushState({ tab }, '', hash);
+    }
+
+    if (tab !== 'home') {
+      loadGrid(true);
+    }
+  }
+
   function handleFilterChange(newFilter: string) {
     activeFilter = newFilter;
+    loadGrid(true);
+  }
+
+  function handleCategoryChange(newCategory: string) {
+    activeCategory = newCategory;
+    loadGrid(true);
+  }
+
+  function handleYearChange(newYear: string) {
+    activeYear = newYear;
+    loadGrid(true);
+  }
+
+  function handleDateAddedChange(newDate: string) {
+    activeDateAdded = newDate;
     loadGrid(true);
   }
 
@@ -122,8 +238,17 @@
   }
 
   function handleFullSearch(q: string) {
-    searchQuery = q;
-    loadGrid(true);
+    searchQuery = q.trim();
+    if (searchQuery) {
+      loadGrid(true);
+    }
+  }
+
+  function handleClearSearch() {
+    searchQuery = '';
+    if (activeTab !== 'home') {
+      loadGrid(true);
+    }
   }
 
   function handleLoadMore() {
@@ -131,14 +256,17 @@
     loadGrid(false);
   }
 
-  async function openTitleDetail(title: Title | number) {
+  // Modal open & close with History API
+  async function openTitleDetail(title: Title | number, pushHistory = true) {
     const id = typeof title === 'number' ? title : title.id;
     try {
       const detail = await fetchTitleDetail(id);
       selectedTitleDetail = detail;
+      if (pushHistory) {
+        window.history.pushState({ modal: 'title', id }, '', `#/title/${id}`);
+      }
     } catch (err) {
       console.error('Failed to load title details:', err);
-      // Fallback with minimal info if title object is available
       if (typeof title !== 'number') {
         selectedTitleDetail = {
           ...title,
@@ -149,9 +277,30 @@
     }
   }
 
-  function handleQuickPlay(title: Title) {
-    // If has next episode or can open detail modal
-    openTitleDetail(title);
+  function closeTitleDetail(shouldGoBack = true) {
+    selectedTitleDetail = null;
+    if (shouldGoBack && window.location.hash.startsWith('#/title/')) {
+      window.history.back();
+    }
+  }
+
+  function openSettings(pushHistory = true) {
+    isSettingsOpen = true;
+    if (pushHistory) {
+      window.history.pushState({ modal: 'settings' }, '', '#/settings');
+    }
+  }
+
+  function closeSettings(shouldGoBack = true) {
+    isSettingsOpen = false;
+    if (shouldGoBack && window.location.hash === '#/settings') {
+      window.history.back();
+    }
+  }
+
+  function handlePreviewVideo(file: MediaFile) {
+    previewFile = file;
+    previewTitleName = selectedTitleDetail?.name || '';
   }
 
   function handlePlayNext(item: ContinueWatchingItem) {
@@ -162,75 +311,368 @@
     }
   }
 
-  function handlePreviewVideo(file: MediaFile) {
-    previewFile = file;
-    previewTitleName = selectedTitleDetail?.name || '';
+  // Popstate listener for mouse forward/backward & browser navigation
+  function handlePopState(e: PopStateEvent) {
+    const hash = window.location.hash || '#/';
+
+    if (hash.startsWith('#/title/')) {
+      const id = parseInt(hash.replace('#/title/', ''), 10);
+      if (!isNaN(id)) {
+        openTitleDetail(id, false);
+      }
+      return;
+    }
+
+    if (hash === '#/settings') {
+      isSettingsOpen = true;
+      selectedTitleDetail = null;
+      return;
+    }
+
+    // Close any open modals
+    selectedTitleDetail = null;
+    isSettingsOpen = false;
+    previewFile = null;
+
+    if (hash === '#/movies') {
+      navigateToTab('movies', false);
+    } else if (hash === '#/series') {
+      navigateToTab('series', false);
+    } else if (hash === '#/anime') {
+      navigateToTab('anime', false);
+    } else if (hash === '#/documentary') {
+      navigateToTab('documentary', false);
+    } else if (hash === '#/following') {
+      navigateToTab('following', false);
+    } else {
+      activeTab = 'home';
+      searchQuery = '';
+    }
   }
 
   onMount(() => {
     loadSystemHealth();
     loadShelves();
-    loadGrid(true);
 
-    // Periodic telemetry polling every 15 seconds
-    const interval = setInterval(loadSystemHealth, 15000);
-    return () => clearInterval(interval);
+    // Check initial hash route
+    const hash = window.location.hash;
+    if (hash.startsWith('#/title/')) {
+      const id = parseInt(hash.replace('#/title/', ''), 10);
+      if (!isNaN(id)) openTitleDetail(id, false);
+    } else if (hash === '#/settings') {
+      isSettingsOpen = true;
+    } else if (hash === '#/movies' || hash === '#/series' || hash === '#/anime' || hash === '#/documentary' || hash === '#/following') {
+      navigateToTab(hash.replace('#/', ''), false);
+    }
+
+    window.addEventListener('popstate', handlePopState);
+
+    // Periodic telemetry polling every 12 seconds
+    const interval = setInterval(loadSystemHealth, 12000);
+    return () => {
+      window.removeEventListener('popstate', handlePopState);
+      clearInterval(interval);
+    };
   });
 </script>
 
 <div class="min-h-screen bg-zinc-950 flex flex-col text-zinc-100">
-  <!-- Sticky Navbar -->
+  <!-- Sticky Navbar with live Indexing & Tab routing -->
   <Navbar
     {status}
     {scheduler}
-    onOpenSettings={() => { isSettingsOpen = true; }}
+    {activeTab}
+    onSelectTab={(tab) => navigateToTab(tab, true)}
+    onOpenSettings={() => openSettings(true)}
   />
 
-  <!-- Main Hero & Content -->
-  <main class="flex-1 max-w-7xl w-full mx-auto px-4 sm:px-6 lg:px-8 py-6">
-    <!-- Hero / Search Section -->
-    <div class="py-6 text-center">
-      <h1 class="text-2xl sm:text-3xl font-extrabold tracking-tight text-zinc-100 mb-2">
+  <!-- Main Container -->
+  <main class="flex-1 max-w-7xl w-full mx-auto px-4 sm:px-6 lg:px-8 py-5">
+    
+    <!-- Hero / Search Section (Always Global) -->
+    <div class="py-4 text-center">
+      <h1 class="text-2xl sm:text-3xl font-extrabold tracking-tight text-zinc-100 mb-1.5">
         Instant BDIX Streaming
       </h1>
-      <p class="text-xs sm:text-sm text-zinc-400 mb-6 max-w-md mx-auto">
+      <p class="text-xs sm:text-sm text-zinc-400 mb-3 max-w-md mx-auto">
         Zero-proxy direct playback from local ISP caches in 4K, 1080p and HDR
       </p>
 
+      <!-- Library Breakdown Stat Pills -->
+      <div class="flex flex-wrap items-center justify-center gap-2 mb-5">
+        <button
+          type="button"
+          onclick={() => navigateToTab('movies', true)}
+          class="inline-flex items-center gap-1.5 px-3 py-1 rounded-full text-xs font-mono font-medium bg-zinc-900/80 hover:bg-zinc-850 border border-zinc-800 text-zinc-300 transition-colors cursor-pointer"
+        >
+          <span>🎬</span>
+          <span>{status?.movies_count?.toLocaleString() || 0} Movies</span>
+        </button>
+
+        <button
+          type="button"
+          onclick={() => navigateToTab('series', true)}
+          class="inline-flex items-center gap-1.5 px-3 py-1 rounded-full text-xs font-mono font-medium bg-zinc-900/80 hover:bg-zinc-850 border border-zinc-800 text-zinc-300 transition-colors cursor-pointer"
+        >
+          <span>📺</span>
+          <span>{status?.series_count?.toLocaleString() || 0} Series</span>
+        </button>
+
+        <button
+          type="button"
+          onclick={() => navigateToTab('documentary', true)}
+          class="inline-flex items-center gap-1.5 px-3 py-1 rounded-full text-xs font-mono font-medium bg-zinc-900/80 hover:bg-zinc-850 border border-zinc-800 text-zinc-300 transition-colors cursor-pointer"
+        >
+          <span>📁</span>
+          <span>{status?.others_count?.toLocaleString() || 0} Docs & Others</span>
+        </button>
+
+        <div class="inline-flex items-center gap-1.5 px-3 py-1 rounded-full text-xs font-mono font-medium bg-zinc-900/80 border border-zinc-800 text-amber-300">
+          <span>⚡</span>
+          <span>{status?.files_count?.toLocaleString() || 0} Total Files</span>
+        </div>
+      </div>
+
       <!-- Instant Search Bar with 100ms Debounce & Spotlight -->
       <SearchBar
-        onSelectTitle={(t) => openTitleDetail(t)}
+        onSelectTitle={(t) => openTitleDetail(t, true)}
         onFullSearch={handleFullSearch}
-        onQuickPlay={handleQuickPlay}
+        onQuickPlay={(t) => openTitleDetail(t, true)}
       />
     </div>
 
-    <!-- Continue Watching Shelf -->
-    <ContinueWatching
-      items={continueWatching}
-      onSelectTitle={(id) => openTitleDetail(id)}
-      onPlayNext={handlePlayNext}
-    />
+    <!-- VIEW 1: ACTIVE SEARCH QUERY (Hides Home blocks and focuses on search results) -->
+    {#if searchQuery}
+      <PosterGrid
+        {titles}
+        {activeFilter}
+        {activeCategory}
+        {activeYear}
+        {activeDateAdded}
+        {activeSort}
+        {searchQuery}
+        totalCount={totalTitles}
+        loading={loadingGrid}
+        categories={[]}
+        onFilterChange={handleFilterChange}
+        onCategoryChange={handleCategoryChange}
+        onYearChange={handleYearChange}
+        onDateAddedChange={handleDateAddedChange}
+        onSortChange={handleSortChange}
+        onSelectTitle={(t) => openTitleDetail(t, true)}
+        onClearSearch={handleClearSearch}
+        onLoadMore={handleLoadMore}
+      />
 
-    <!-- What's New Shelf / Carousel -->
-    <WhatsNew
-      items={whatsNew}
-      onSelectTitle={(t) => openTitleDetail(t)}
-    />
+    <!-- VIEW 2: HOMEPAGE (3 BLOCKS ARCHITECTURE) -->
+    {:else if activeTab === 'home'}
+      
+      <!-- Continue Watching Shelf -->
+      <ContinueWatching
+        items={continueWatching}
+        onSelectTitle={(id) => openTitleDetail(id, true)}
+        onPlayNext={handlePlayNext}
+      />
 
-    <!-- Main Filterable & Sortable Poster Grid -->
-    <PosterGrid
-      {titles}
-      {activeFilter}
-      {activeSort}
-      {searchQuery}
-      totalCount={totalTitles}
-      loading={loadingGrid}
-      onFilterChange={handleFilterChange}
-      onSortChange={handleSortChange}
-      onSelectTitle={(t) => openTitleDetail(t)}
-      onLoadMore={handleLoadMore}
-    />
+      <!-- BLOCK 1: What's New on BDIX (Recently Added horizontal shelf) -->
+      <WhatsNew
+        items={whatsNew}
+        onSelectTitle={(t) => openTitleDetail(t, true)}
+        onViewAll={() => navigateToTab('movies', true)}
+      />
+
+      <!-- BLOCK 2: Movies Shelf (with quick ISP category chips & Explore All Movies) -->
+      <MediaShelf
+        title="Featured Movies"
+        icon="🎬"
+        items={homeMovies}
+        categories={movieCategories}
+        activeCategory={homeMovieCategory}
+        onSelectCategory={handleHomeMovieCategoryChange}
+        onSelectTitle={(t) => openTitleDetail(t, true)}
+        onExploreAll={() => navigateToTab('movies', true)}
+      />
+
+      <!-- BLOCK 3: TV & Web Series Shelf (with quick ISP series chips & Explore All Series) -->
+      <MediaShelf
+        title="TV & Web Series"
+        icon="📺"
+        items={homeSeries}
+        categories={seriesCategories}
+        activeCategory={homeSeriesCategory}
+        onSelectCategory={handleHomeSeriesCategoryChange}
+        onSelectTitle={(t) => openTitleDetail(t, true)}
+        onExploreAll={() => navigateToTab('series', true)}
+      />
+
+    <!-- VIEW 3: DEDICATED MOVIES PAGE -->
+    {:else if activeTab === 'movies'}
+      <div class="mb-2">
+        <h2 class="text-xl font-extrabold text-zinc-100 flex items-center gap-2">
+          <span>🎬</span>
+          <span>All Movies Collection</span>
+        </h2>
+        <p class="text-xs text-zinc-400">Filter by ISP subcategory, release year, date added, or quality</p>
+      </div>
+
+      <PosterGrid
+        {titles}
+        {activeFilter}
+        {activeCategory}
+        {activeYear}
+        {activeDateAdded}
+        {activeSort}
+        {searchQuery}
+        totalCount={totalTitles}
+        loading={loadingGrid}
+        categories={movieCategories}
+        onFilterChange={handleFilterChange}
+        onCategoryChange={handleCategoryChange}
+        onYearChange={handleYearChange}
+        onDateAddedChange={handleDateAddedChange}
+        onSortChange={handleSortChange}
+        onSelectTitle={(t) => openTitleDetail(t, true)}
+        onLoadMore={handleLoadMore}
+      />
+
+    <!-- VIEW 4: DEDICATED TV & WEB SERIES PAGE -->
+    {:else if activeTab === 'series'}
+      <div class="mb-2">
+        <h2 class="text-xl font-extrabold text-zinc-100 flex items-center gap-2">
+          <span>📺</span>
+          <span>TV & Web Series</span>
+        </h2>
+        <p class="text-xs text-zinc-400">Browse TV series, Korean dramas, anime, and shows</p>
+      </div>
+
+      <PosterGrid
+        {titles}
+        {activeFilter}
+        {activeCategory}
+        {activeYear}
+        {activeDateAdded}
+        {activeSort}
+        {searchQuery}
+        totalCount={totalTitles}
+        loading={loadingGrid}
+        categories={seriesCategories}
+        onFilterChange={handleFilterChange}
+        onCategoryChange={handleCategoryChange}
+        onYearChange={handleYearChange}
+        onDateAddedChange={handleDateAddedChange}
+        onSortChange={handleSortChange}
+        onSelectTitle={(t) => openTitleDetail(t, true)}
+        onLoadMore={handleLoadMore}
+      />
+
+    <!-- VIEW 5: ANIME & CARTOONS PAGE -->
+    {:else if activeTab === 'anime'}
+      <div class="mb-2">
+        <h2 class="text-xl font-extrabold text-zinc-100 flex items-center gap-2">
+          <span>⛩️</span>
+          <span>Anime & Animated Series</span>
+        </h2>
+        <p class="text-xs text-zinc-400">Animated movies and anime series on BDIX</p>
+      </div>
+
+      <PosterGrid
+        {titles}
+        {activeFilter}
+        {activeCategory}
+        {activeYear}
+        {activeDateAdded}
+        {activeSort}
+        {searchQuery}
+        totalCount={totalTitles}
+        loading={loadingGrid}
+        categories={['All', 'Animation Movies', 'Anime & Cartoons']}
+        onFilterChange={handleFilterChange}
+        onCategoryChange={handleCategoryChange}
+        onYearChange={handleYearChange}
+        onDateAddedChange={handleDateAddedChange}
+        onSortChange={handleSortChange}
+        onSelectTitle={(t) => openTitleDetail(t, true)}
+        onLoadMore={handleLoadMore}
+      />
+
+    <!-- VIEW 6: DOCUMENTARIES PAGE -->
+    {:else if activeTab === 'documentary'}
+      <div class="mb-2">
+        <h2 class="text-xl font-extrabold text-zinc-100 flex items-center gap-2">
+          <span>🌍</span>
+          <span>Documentaries</span>
+        </h2>
+        <p class="text-xs text-zinc-400">Documentary films and docu-series from BDIX servers</p>
+      </div>
+
+      <PosterGrid
+        {titles}
+        {activeFilter}
+        {activeCategory}
+        {activeYear}
+        {activeDateAdded}
+        {activeSort}
+        {searchQuery}
+        totalCount={totalTitles}
+        loading={loadingGrid}
+        categories={[]}
+        onFilterChange={handleFilterChange}
+        onCategoryChange={handleCategoryChange}
+        onYearChange={handleYearChange}
+        onDateAddedChange={handleDateAddedChange}
+        onSortChange={handleSortChange}
+        onSelectTitle={(t) => openTitleDetail(t, true)}
+        onLoadMore={handleLoadMore}
+      />
+
+    <!-- VIEW 7: FOLLOWING MANAGEMENT PAGE -->
+    {:else if activeTab === 'following'}
+      <div class="mb-4 p-4 rounded-2xl bg-amber-500/10 border border-amber-500/30 flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+        <div class="flex items-center gap-3">
+          <div class="p-2.5 rounded-xl bg-amber-500/20 text-amber-400 border border-amber-500/30">
+            <Star class="w-5 h-5 fill-current" />
+          </div>
+          <div>
+            <h2 class="text-base font-bold text-zinc-100">
+              Followed Titles ({totalTitles})
+            </h2>
+            <p class="text-xs text-zinc-300">
+              You receive instant Telegram alerts immediately when new episodes or files drop for these titles.
+            </p>
+          </div>
+        </div>
+
+        <button
+          type="button"
+          onclick={() => navigateToTab('home', true)}
+          class="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-xl bg-zinc-850 hover:bg-zinc-800 text-xs font-semibold text-zinc-300 transition-colors self-start sm:self-auto"
+        >
+          <ArrowLeft class="w-3.5 h-3.5" />
+          <span>Back to Home</span>
+        </button>
+      </div>
+
+      <PosterGrid
+        {titles}
+        {activeFilter}
+        {activeCategory}
+        {activeYear}
+        {activeDateAdded}
+        {activeSort}
+        {searchQuery}
+        totalCount={totalTitles}
+        loading={loadingGrid}
+        categories={[]}
+        onFilterChange={handleFilterChange}
+        onCategoryChange={handleCategoryChange}
+        onYearChange={handleYearChange}
+        onDateAddedChange={handleDateAddedChange}
+        onSortChange={handleSortChange}
+        onSelectTitle={(t) => openTitleDetail(t, true)}
+        onLoadMore={handleLoadMore}
+      />
+    {/if}
+
   </main>
 
   <!-- Footer -->
@@ -240,16 +682,16 @@
         <span>FTP-Lantern • Lightweight BDIX Media Gateway</span>
       </div>
       <div>
-        <span>Direct Stream Mode: <strong class="text-zinc-300">Host Network</strong></span>
+        <span>Host Network Mode: <strong class="text-emerald-400">Direct ISP Subnet</strong></span>
       </div>
     </div>
   </footer>
 
-  <!-- Modals -->
+  <!-- Modals with History API navigation -->
   {#if selectedTitleDetail}
     <TitleDetailModal
       title={selectedTitleDetail}
-      onClose={() => { selectedTitleDetail = null; }}
+      onClose={() => closeTitleDetail(true)}
       onPreview={handlePreviewVideo}
     />
   {/if}
@@ -259,7 +701,7 @@
       isOpen={isSettingsOpen}
       {status}
       {scheduler}
-      onClose={() => { isSettingsOpen = false; }}
+      onClose={() => closeSettings(true)}
       onRefresh={loadSystemHealth}
     />
   {/if}

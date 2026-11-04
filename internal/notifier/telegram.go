@@ -116,26 +116,119 @@ func (n *Notifier) DispatchEvents() {
 	}
 }
 
-func (n *Notifier) sendSingleEvent(ev EventRow) {
+func (n *Notifier) DispatchFollowedEvents() {
+	if n.cfg.TelegramBotToken == "" || n.cfg.TelegramAdminChatID == 0 {
+		return
+	}
+
+	n.mu.Lock()
+	if n.isPaused {
+		n.mu.Unlock()
+		return
+	}
+	n.mu.Unlock()
+
+	rows, err := n.database.Query(`
+		SELECT e.id, e.kind, e.title_id, t.name, t.year, t.thumb_hash, e.payload_json
+		FROM events e
+		JOIN titles t ON t.id = e.title_id
+		WHERE e.notified_at IS NULL AND e.failed_at IS NULL AND t.is_following = 1
+		ORDER BY e.created_at ASC
+	`)
+	if err != nil {
+		return
+	}
+	defer rows.Close()
+
+	var events []EventRow
+	for rows.Next() {
+		var ev EventRow
+		var thumbHash *string
+		_ = rows.Scan(&ev.ID, &ev.Kind, &ev.TitleID, &ev.TitleName, &ev.Year, &thumbHash, &ev.PayloadJSON)
+		if thumbHash != nil {
+			ev.ThumbHash = *thumbHash
+		}
+		events = append(events, ev)
+	}
+	_ = rows.Close()
+
+	for _, ev := range events {
+		n.sendFollowedInstantAlert(ev)
+	}
+}
+
+func (n *Notifier) sendFollowedInstantAlert(ev EventRow) {
 	var payload map[string]interface{}
 	_ = json.Unmarshal([]byte(ev.PayloadJSON), &payload)
 
-	titleEsc := html.EscapeString(ev.TitleName)
+	titleName := ev.TitleName
+	if ev.Year > 0 && !strings.Contains(titleName, fmt.Sprintf("(%d)", ev.Year)) {
+		titleName = fmt.Sprintf("%s (%d)", titleName, ev.Year)
+	}
+	titleEsc := html.EscapeString(titleName)
+
+	var epDesc string
+	if eps, ok := payload["episodes"].([]interface{}); ok && len(eps) > 0 {
+		var epCodes []string
+		for _, e := range eps {
+			if s, ok := e.(string); ok {
+				epCodes = append(epCodes, s)
+			}
+		}
+		epDesc = fmt.Sprintf("\n⚡ New: <b>%s</b>", html.EscapeString(strings.Join(epCodes, ", ")))
+	}
+
 	res := "1080p"
 	if r, ok := payload["resolution"].(string); ok && r != "" {
 		res = r
 	}
 
-	yearStr := ""
-	if ev.Year > 0 {
-		yearStr = fmt.Sprintf(" (%d)", ev.Year)
+	caption := fmt.Sprintf(
+		"🔔 <b>Instant Alert: Followed Content</b>\n📺 <b>%s</b>%s\n🎞 Quality: %s\n🔗 <a href=\"%s/#/title/%d\">Stream Now in FTP-Lantern</a>",
+		titleEsc,
+		epDesc,
+		html.EscapeString(res),
+		n.cfg.PublicBaseURL,
+		ev.TitleID,
+	)
+
+	thumbPath := n.thumbsMgr.ThumbPath(ev.TitleID, ev.ThumbHash)
+	var err error
+	if _, statErr := os.Stat(thumbPath); statErr == nil {
+		err = n.sendPhoto(thumbPath, caption)
+	} else {
+		err = n.sendMessage(caption)
+	}
+
+	if err != nil {
+		n.handleError(ev.ID, err)
+	} else {
+		_, _ = n.database.Exec("UPDATE events SET notified_at = CURRENT_TIMESTAMP WHERE id = ?", ev.ID)
+	}
+}
+
+func (n *Notifier) DispatchDailyDigest() {
+	n.DispatchEvents()
+}
+
+func (n *Notifier) sendSingleEvent(ev EventRow) {
+	var payload map[string]interface{}
+	_ = json.Unmarshal([]byte(ev.PayloadJSON), &payload)
+
+	titleName := ev.TitleName
+	if ev.Year > 0 && !strings.Contains(titleName, fmt.Sprintf("(%d)", ev.Year)) {
+		titleName = fmt.Sprintf("%s (%d)", titleName, ev.Year)
+	}
+	titleEsc := html.EscapeString(titleName)
+	res := "1080p"
+	if r, ok := payload["resolution"].(string); ok && r != "" {
+		res = r
 	}
 
 	caption := fmt.Sprintf(
-		"🎬 <b>New Content Added [%s]</b>\n📺 <b>%s%s</b>\n🎞 Quality: %s\n🔗 <a href=\"%s/#/title/%d\">Open in FTP-Lantern</a>",
+		"🎬 <b>New Content Added [%s]</b>\n📺 <b>%s</b>\n🎞 Quality: %s\n🔗 <a href=\"%s/#/title/%d\">Open in FTP-Lantern</a>",
 		html.EscapeString(res),
 		titleEsc,
-		yearStr,
 		html.EscapeString(res),
 		n.cfg.PublicBaseURL,
 		ev.TitleID,
@@ -173,7 +266,12 @@ func (n *Notifier) sendBatchDigest(events []EventRow) {
 			res = r
 		}
 
-		line := fmt.Sprintf("• <b>%s</b> — [%s]\n", html.EscapeString(ev.TitleName), html.EscapeString(res))
+		titleName := ev.TitleName
+		if ev.Year > 0 && !strings.Contains(titleName, fmt.Sprintf("(%d)", ev.Year)) {
+			titleName = fmt.Sprintf("%s (%d)", titleName, ev.Year)
+		}
+
+		line := fmt.Sprintf("• <b>%s</b> — [%s]\n", html.EscapeString(titleName), html.EscapeString(res))
 
 		// Check item-boundary character threshold (3800)
 		if sb.Len()+len(line) > 3800 {

@@ -9,6 +9,9 @@ export interface Title {
   is_following: boolean | number;
   first_seen: string;
   last_modified?: string;
+  category?: string;
+  size_bytes?: number;
+  size_human?: string;
   // Computed / aggregated fields from backend queries
   resolution?: string;
   source?: string;
@@ -82,16 +85,31 @@ export interface ContinueWatchingItem {
 
 export interface SystemStatus {
   bdix_connected: boolean;
+  isp_connected?: boolean;
   isp_gateway_ip?: string;
   titles_count: number;
   files_count: number;
   releases_count: number;
+  movies_count?: number;
+  series_count?: number;
+  others_count?: number;
   memory_alloc_mb: number;
   memory_sys_mb: number;
   goroutines_count?: number;
+  uptime?: string;
   uptime_seconds?: number;
   last_scan_at?: string;
   is_crawling?: boolean;
+  current_source?: string;
+  current_folder?: string;
+  files_indexed_session?: number;
+  folders_indexed_session?: number;
+  items_per_second?: number;
+  last_scan_duration_sec?: number;
+  db_size_bytes?: number;
+  db_size_human?: string;
+  thumbs_size_bytes?: number;
+  thumbs_size_human?: string;
   crawler_status?: string;
   telegram_error?: string;
 }

@@ -14,14 +14,17 @@
     HardDrive,
     Eye
   } from '@lucide/svelte';
-  import type { TitleDetail, MediaFile, Release } from '../types';
+  import type { TitleDetail, MediaFile } from '../types';
   import {
     getThumbUrl,
     formatBytes,
     downloadM3U,
     playOnAndroid,
+    playOnPotPlayer,
+    playOnVLC,
     recordPlay,
-    toggleFollow
+    toggleFollow,
+    displayTitleWithYear
   } from '../api';
   import PosterImage from './PosterImage.svelte';
   import ResolutionBadge from './ResolutionBadge.svelte';
@@ -80,7 +83,6 @@
     return seasonsMap.get(activeSeason) || allFiles;
   });
 
-  // Keep activeSeason valid when title changes
   $effect(() => {
     if (title) {
       isFollowing = Boolean(title.is_following);
@@ -91,7 +93,6 @@
     }
   });
 
-  // Handle escape key
   function handleKeyDown(e: KeyboardEvent) {
     if (e.key === 'Escape') {
       onClose();
@@ -117,7 +118,6 @@
 
   function handlePlaySeason() {
     if (!title) return;
-    // Download season M3U playlist
     const seasonId = activeSeason || 1;
     downloadM3U(`/play/season/${title.id}.m3u?season=${seasonId}`);
   }
@@ -146,7 +146,7 @@
 </script>
 
 {#if title}
-  <div class="fixed inset-0 z-50 flex items-center justify-center p-3 sm:p-6 bg-zinc-950/80 backdrop-blur-md overflow-y-auto">
+  <div class="fixed inset-0 z-50 flex items-center justify-center p-3 sm:p-6 bg-zinc-950/85 backdrop-blur-md overflow-y-auto" role="dialog" aria-modal="true">
     <!-- Backdrop click -->
     <div
       role="button"
@@ -158,7 +158,7 @@
     ></div>
 
     <!-- Modal Box -->
-    <div class="relative w-full max-w-4xl max-h-[90vh] flex flex-col rounded-2xl bg-zinc-900 border border-zinc-800 shadow-2xl overflow-hidden z-10 animate-in fade-in zoom-in-95 duration-200">
+    <div class="relative w-full max-w-4xl max-h-[92vh] flex flex-col rounded-2xl bg-zinc-900 border border-zinc-800 shadow-2xl overflow-hidden z-10 animate-in fade-in zoom-in-95 duration-200">
       
       <!-- Modal Header Banner -->
       <div class="relative p-5 sm:p-6 border-b border-zinc-800 bg-gradient-to-r from-zinc-900 via-zinc-900/95 to-zinc-950">
@@ -193,12 +193,17 @@
                   {title.year}
                 </span>
               {/if}
+              {#if title.size_human}
+                <span class="px-2 py-0.5 rounded text-[11px] font-mono font-bold bg-amber-500/10 text-amber-400 border border-amber-500/30">
+                  {title.size_human} Total
+                </span>
+              {/if}
               {#if title.resolution}
                 <ResolutionBadge resolution={title.resolution} size="sm" />
               {/if}
-              {#if title.source}
+              {#if title.category}
                 <span class="px-2 py-0.5 rounded text-[11px] font-mono bg-zinc-800 text-zinc-300 border border-zinc-700">
-                  {title.source}
+                  {title.category}
                 </span>
               {/if}
               {#if title.has_hdr}
@@ -208,39 +213,41 @@
               {/if}
             </div>
 
+            <!-- Title with Year in Bracket -->
             <h1 class="text-xl sm:text-2xl font-extrabold text-zinc-100 tracking-tight">
-              {title.name}
+              {displayTitleWithYear(title.name, title.year)}
             </h1>
 
             <p class="text-xs text-zinc-400 mt-2 flex items-center gap-2">
               <HardDrive class="w-3.5 h-3.5 text-zinc-500" />
-              <span>Available directly on BDIX server (zero transcoder delay)</span>
+              <span>Direct streaming from local ISP cache • Zero proxy bandwidth bottleneck</span>
             </p>
 
             <!-- Actions row -->
-            <div class="flex flex-wrap items-center gap-3 mt-4">
+            <div class="flex flex-wrap items-center gap-2.5 mt-4">
               <!-- Play Season M3U (Windows) -->
               {#if title.type === 'series'}
                 <button
                   type="button"
                   onclick={handlePlaySeason}
-                  class="inline-flex items-center gap-2 px-4 py-2 rounded-xl bg-amber-500 hover:bg-amber-400 text-zinc-950 font-bold text-xs shadow-md shadow-amber-500/20 transition-all hover:scale-105 active:scale-95"
+                  class="inline-flex items-center gap-2 px-3.5 py-2 rounded-xl bg-amber-500 hover:bg-amber-400 text-zinc-950 font-bold text-xs shadow-md shadow-amber-500/20 transition-all hover:scale-105 active:scale-95"
                 >
                   <Monitor class="w-4 h-4" />
-                  <span>Play Season {activeSeason} (VLC / PotPlayer)</span>
+                  <span>Download Season {activeSeason} Playlist (.m3u)</span>
                 </button>
               {/if}
 
-              <!-- Follow toggle -->
+              <!-- Follow toggle with Instant Alert Badge -->
               <button
                 type="button"
                 onclick={handleToggleFollow}
                 class="inline-flex items-center gap-2 px-3.5 py-2 rounded-xl border text-xs font-semibold transition-colors {isFollowing
                   ? 'bg-amber-500/20 text-amber-300 border-amber-500/40'
                   : 'bg-zinc-800/80 text-zinc-300 border-zinc-700 hover:bg-zinc-750'}"
+                title={isFollowing ? 'Receiving instant alerts when new files arrive' : 'Follow to get instant alerts on new episodes'}
               >
                 <Star class="w-3.5 h-3.5 {isFollowing ? 'fill-current text-amber-400' : ''}" />
-                <span>{isFollowing ? 'Following' : 'Follow Title'}</span>
+                <span>{isFollowing ? 'Following (Instant Alerts)' : 'Follow for Instant Alerts'}</span>
               </button>
             </div>
           </div>
@@ -271,7 +278,7 @@
       <div class="flex-1 overflow-y-auto p-4 sm:p-6 space-y-2.5">
         <div class="flex items-center justify-between text-xs font-mono text-zinc-400 px-1 mb-1">
           <span>{title.type === 'series' ? `EPISODES IN SEASON ${activeSeason} (${currentEpisodes.length})` : `AVAILABLE MEDIA FILES (${currentEpisodes.length})`}</span>
-          <span>1-CLICK DIRECT STREAM</span>
+          <span>1-CLICK DIRECT LAUNCH</span>
         </div>
 
         {#if currentEpisodes.length > 0}
@@ -292,7 +299,7 @@
                 </div>
 
                 <div class="flex items-center gap-3 mt-1.5 text-xs font-mono text-zinc-400">
-                  <span>{formatBytes(ep.file_size_bytes)}</span>
+                  <span class="text-amber-300 font-bold">{formatBytes(ep.file_size_bytes)}</span>
                   {#if ep.resolution}
                     <span>• {ep.resolution}</span>
                   {/if}
@@ -305,20 +312,31 @@
                 </div>
               </div>
 
-              <!-- Stream actions buttons -->
+              <!-- Stream actions buttons: PotPlayer, VLC, Android, Preview, Copy -->
               <div class="flex items-center gap-1.5 sm:gap-2 flex-wrap flex-shrink-0">
-                <!-- Windows VLC/PotPlayer M3U -->
+                <!-- 1-Click PotPlayer Launch (No download!) -->
                 <button
                   type="button"
-                  onclick={() => handleWindowsPlay(ep)}
-                  class="inline-flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg bg-zinc-800 hover:bg-zinc-700 text-zinc-200 text-xs font-medium border border-zinc-700 transition-colors"
-                  title="Stream on Windows (VLC, PotPlayer)"
+                  onclick={() => playOnPotPlayer(ep.file_url, ep.id)}
+                  class="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-amber-500/15 hover:bg-amber-500/25 text-amber-300 text-xs font-semibold border border-amber-500/30 transition-colors"
+                  title="Direct 1-Click Launch in Daum PotPlayer (Zero download required!)"
                 >
-                  <Monitor class="w-3.5 h-3.5 text-zinc-400" />
-                  <span class="hidden sm:inline">Windows</span>
+                  <Play class="w-3.5 h-3.5 fill-current" />
+                  <span>PotPlayer</span>
                 </button>
 
-                <!-- Android VLC/MX Intent -->
+                <!-- 1-Click VLC Launch -->
+                <button
+                  type="button"
+                  onclick={() => playOnVLC(ep.file_url, ep.id)}
+                  class="inline-flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg bg-zinc-800 hover:bg-zinc-700 text-zinc-200 text-xs font-medium border border-zinc-700 transition-colors"
+                  title="Direct 1-Click Launch in VLC Media Player"
+                >
+                  <Monitor class="w-3.5 h-3.5 text-orange-400" />
+                  <span>VLC</span>
+                </button>
+
+                <!-- Android Intent -->
                 <button
                   type="button"
                   onclick={() => handleAndroidPlay(ep)}
@@ -329,23 +347,23 @@
                   <span class="hidden sm:inline">Android</span>
                 </button>
 
-                <!-- Preview in Browser -->
+                <!-- In-Browser Video Preview -->
                 <button
                   type="button"
                   onclick={() => onPreview(ep)}
-                  class="inline-flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg bg-amber-500/10 hover:bg-amber-500/20 text-amber-300 text-xs font-medium border border-amber-500/30 transition-colors"
+                  class="inline-flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg bg-zinc-800 hover:bg-zinc-700 text-zinc-300 text-xs font-medium border border-zinc-700 transition-colors"
                   title="Preview in Browser player"
                 >
-                  <Eye class="w-3.5 h-3.5 text-amber-400" />
+                  <Eye class="w-3.5 h-3.5 text-zinc-400" />
                   <span class="hidden sm:inline">Preview</span>
                 </button>
 
-                <!-- Copy Link -->
+                <!-- Copy Link Button -->
                 <button
                   type="button"
                   onclick={() => copyStreamLink(ep)}
-                  class="p-1.5 rounded-lg bg-zinc-800 hover:bg-zinc-700 text-zinc-400 hover:text-zinc-200 border border-zinc-700 transition-colors"
-                  title={copiedFileId === ep.id ? 'Copied URL!' : 'Copy Direct Stream URL'}
+                  class="p-2 rounded-lg bg-zinc-800 hover:bg-zinc-700 text-zinc-400 hover:text-zinc-200 border border-zinc-700 transition-colors"
+                  title={copiedFileId === ep.id ? 'Copied URL to Clipboard!' : 'Copy Direct Stream URL'}
                   aria-label="Copy stream URL"
                 >
                   {#if copiedFileId === ep.id}
@@ -353,6 +371,17 @@
                   {:else}
                     <Copy class="w-3.5 h-3.5" />
                   {/if}
+                </button>
+
+                <!-- Download M3U playlist file -->
+                <button
+                  type="button"
+                  onclick={() => handleWindowsPlay(ep)}
+                  class="p-2 rounded-lg bg-zinc-800 hover:bg-zinc-700 text-zinc-400 hover:text-zinc-200 border border-zinc-700 transition-colors"
+                  title="Download .m3u Playlist File"
+                  aria-label="Download playlist"
+                >
+                  <Download class="w-3.5 h-3.5" />
                 </button>
               </div>
             </div>
