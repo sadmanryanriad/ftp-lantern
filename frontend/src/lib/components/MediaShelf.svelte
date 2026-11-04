@@ -79,15 +79,18 @@
 
   <!-- Quick Subcategory Filter Chips -->
   {#if categories && categories.length > 0}
-    <div class="flex items-center gap-1.5 overflow-x-auto pb-2 mb-3 scrollbar-none">
+    <div
+      class="flex items-center gap-1.5 overflow-x-auto whitespace-nowrap pb-2 mb-3 w-full min-w-0 scrollbar-thin scrollbar-thumb-zinc-700 scrollbar-track-zinc-900/50"
+      style="-webkit-overflow-scrolling: touch;"
+    >
       {#each categories as cat}
         {@const isSelected = activeCategory === cat}
         <button
           type="button"
           onclick={() => onSelectCategory(cat)}
-          class="px-2.5 py-1 rounded-full text-xs font-medium whitespace-nowrap transition-all {isSelected
+          class="flex-shrink-0 px-2.5 py-1 rounded-full text-xs font-medium whitespace-nowrap transition-all {isSelected
             ? 'bg-amber-500 text-zinc-950 font-bold shadow-sm'
-            : 'bg-zinc-900/80 text-zinc-400 hover:text-zinc-200 hover:bg-zinc-800 border border-zinc-800'}"
+            : 'bg-zinc-900/90 text-zinc-300 hover:text-white hover:bg-zinc-800 border border-zinc-800'}"
         >
           {cat}
         </button>

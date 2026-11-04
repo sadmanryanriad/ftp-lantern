@@ -52,6 +52,8 @@ func (s *Server) RegisterRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("GET /play/season/{season}", s.handleSeasonPlaylist)
 	mux.HandleFunc("GET /api/scheduler", s.handleGetScheduler)
 	mux.HandleFunc("POST /api/scheduler/turbo", s.handleSetTurbo)
+	mux.HandleFunc("POST /api/scheduler/frequency", s.handleSetFrequency)
+	mux.HandleFunc("POST /api/backup", s.handleBackup)
 	mux.HandleFunc("POST /api/crawl/trigger", s.handleTriggerCrawl)
 	mux.HandleFunc("GET /api/status", s.handleStatus)
 }
@@ -786,6 +788,7 @@ func (s *Server) handleGetScheduler(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, map[string]interface{}{
 		"interval_minutes":        intervalMin,
 		"base_interval_minutes":   s.cfg.BaseCrawlIntervalMinutes,
+		"frequency":               s.database.GetSetting("crawl_frequency", "15m"),
 		"turbo_mode":              isTurbo,
 		"turbo_active":            isTurbo,
 		"turbo_until":             turboUntil,
@@ -793,6 +796,33 @@ func (s *Server) handleGetScheduler(w http.ResponseWriter, r *http.Request) {
 		"last_crawl":              lastCrawl,
 		"is_crawling":             s.crawler.IsCrawling(),
 	})
+}
+
+func (s *Server) handleSetFrequency(w http.ResponseWriter, r *http.Request) {
+	var req struct {
+		Frequency string `json:"frequency"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		http.Error(w, err.Error(), http.StatusBadRequest)
+		return
+	}
+	freq := strings.ToLower(strings.TrimSpace(req.Frequency))
+	if freq != "15m" && freq != "30m" && freq != "1h" && freq != "daily" && freq != "manual" {
+		freq = "15m"
+	}
+	_ = s.database.SetSetting("crawl_frequency", freq)
+	writeJSON(w, map[string]interface{}{"ok": true, "frequency": freq})
+}
+
+func (s *Server) handleBackup(w http.ResponseWriter, r *http.Request) {
+	backupPath := filepath.Join(s.cfg.DataDir, "lantern_backup.db")
+	_ = os.Remove(backupPath)
+	_, err := s.database.Exec(fmt.Sprintf("VACUUM INTO '%s'", backupPath))
+	if err != nil {
+		http.Error(w, fmt.Sprintf("Backup failed: %v", err), http.StatusInternalServerError)
+		return
+	}
+	writeJSON(w, map[string]interface{}{"ok": true, "backup_path": backupPath})
 }
 
 func (s *Server) handleSetTurbo(w http.ResponseWriter, r *http.Request) {

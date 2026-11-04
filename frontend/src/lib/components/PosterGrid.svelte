@@ -133,15 +133,18 @@
 
   <!-- Filter & Subcategory Chips -->
   {#if categories && categories.length > 0}
-    <div class="flex items-center gap-1.5 overflow-x-auto pb-2 mb-4 scrollbar-none">
+    <div
+      class="flex items-center gap-2 overflow-x-auto whitespace-nowrap pb-2 mb-4 w-full min-w-0 scrollbar-thin scrollbar-thumb-zinc-700 scrollbar-track-zinc-900/50"
+      style="-webkit-overflow-scrolling: touch;"
+    >
       {#each categories as cat}
         {@const isSelected = (activeCategory || 'All') === cat}
         <button
           type="button"
           onclick={() => onCategoryChange && onCategoryChange(cat)}
-          class="px-3 py-1 rounded-full text-xs font-medium whitespace-nowrap transition-all {isSelected
-            ? 'bg-amber-500 text-zinc-950 font-bold shadow-md shadow-amber-500/20'
-            : 'bg-zinc-900/80 text-zinc-400 hover:text-zinc-200 hover:bg-zinc-800 border border-zinc-800'}"
+          class="flex-shrink-0 px-3.5 py-1.5 rounded-full text-xs font-medium whitespace-nowrap transition-all {isSelected
+            ? 'bg-amber-500 text-zinc-950 font-bold shadow-md shadow-amber-500/20 scale-[1.02]'
+            : 'bg-zinc-900/90 text-zinc-300 hover:text-white hover:bg-zinc-800 border border-zinc-800'}"
         >
           {cat}
         </button>

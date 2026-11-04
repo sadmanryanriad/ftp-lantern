@@ -15,7 +15,7 @@ services:
       - CRAWL_CONCURRENCY=4
       - GOMEMLIMIT=96MiB
       - MAX_THUMBS_MB=250
-      - PUBLIC_BASE_URL=${PUBLIC_BASE_URL:-http://ftp.com}
+      - PUBLIC_BASE_URL=${PUBLIC_BASE_URL:-http://localhost:8087}
       - TELEGRAM_BOT_TOKEN=${TELEGRAM_BOT_TOKEN}
       - TELEGRAM_ADMIN_CHAT_ID=${TELEGRAM_ADMIN_CHAT_ID}
       - TZ=Asia/Dhaka

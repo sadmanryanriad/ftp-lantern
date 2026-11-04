@@ -138,6 +138,23 @@ export async function triggerCrawl(): Promise<{ message: string; started?: boole
   return res.json();
 }
 
+export async function setSchedulerFrequency(frequency: string): Promise<void> {
+  const res = await fetch(`${API_BASE}/api/scheduler/frequency`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ frequency }),
+  });
+  if (!res.ok) throw new Error(`Set frequency HTTP ${res.status}`);
+}
+
+export async function triggerDbBackup(): Promise<{ ok: boolean; backup_path: string }> {
+  const res = await fetch(`${API_BASE}/api/backup`, {
+    method: 'POST',
+  });
+  if (!res.ok) throw new Error(`Backup HTTP ${res.status}`);
+  return res.json();
+}
+
 export function getThumbUrl(title: { id: number; thumb_hash?: string; poster_url?: string }): string {
   if (title.thumb_hash) {
     return `${API_BASE}/api/thumbs/${title.id}-${title.thumb_hash}.jpg`;

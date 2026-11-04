@@ -103,11 +103,32 @@ func main() {
 	stopScheduler := make(chan struct{})
 	go runScheduler(database, c, notif, cfg, stopScheduler)
 
-	// Kick off initial crawl shortly after boot
+	// Startup crawl logic: Seed if empty, or catch up if last crawl was > 24h ago
 	go func() {
 		time.Sleep(3 * time.Second)
-		_ = c.Crawl(cfg.SourceURLs)
-		notif.DispatchEvents()
+		count, _ := database.TitleCount()
+		if count == 0 {
+			log.Println("[Main] Database empty, starting initial seed crawl...")
+			_ = c.Crawl(cfg.SourceURLs)
+			notif.DispatchFollowedEvents()
+		} else {
+			lastCrawlStr := database.GetSetting("last_crawl_time", "")
+			shouldCatchup := false
+			if lastCrawlStr == "" {
+				shouldCatchup = true
+			} else if t, err := time.Parse(time.RFC3339, lastCrawlStr); err == nil {
+				if time.Since(t) > 24*time.Hour {
+					shouldCatchup = true
+				}
+			}
+			if shouldCatchup {
+				log.Println("[Main] Catch-up crawl starting (last crawl was >24h ago or missing)...")
+				_ = c.Crawl(cfg.SourceURLs)
+				notif.DispatchFollowedEvents()
+			} else {
+				log.Println("[Main] Database already seeded and up-to-date. Skipping boot crawl.")
+			}
+		}
 	}()
 
 	// Start HTTP Server
@@ -166,26 +187,47 @@ func runScheduler(database *db.DB, c *crawler.Crawler, notif *notifier.Notifier,
 				}
 			}
 
-			if isTurbo {
-				// Turbo mode: crawl every 15 minutes
+			// Frequency setting: "15m", "30m", "1h", "daily", "manual"
+			frequency := database.GetSetting("crawl_frequency", "15m")
+
+			if isTurbo || frequency == "15m" {
+				// Crawl every 15 minutes
 				if lastTurboCrawl.IsZero() || now.Sub(lastTurboCrawl) >= 15*time.Minute {
 					lastTurboCrawl = now
 					go func() {
-						log.Printf("[Scheduler] Turbo crawl starting (15m interval)")
+						log.Printf("[Scheduler] Incremental crawl starting (15m interval)")
 						if err := c.Crawl(cfg.SourceURLs); err == nil {
-							// Send instant alert for any followed series
 							notif.DispatchFollowedEvents()
 						}
 					}()
 				}
-			} else {
+			} else if frequency == "30m" {
+				if lastTurboCrawl.IsZero() || now.Sub(lastTurboCrawl) >= 30*time.Minute {
+					lastTurboCrawl = now
+					go func() {
+						log.Printf("[Scheduler] Incremental crawl starting (30m interval)")
+						if err := c.Crawl(cfg.SourceURLs); err == nil {
+							notif.DispatchFollowedEvents()
+						}
+					}()
+				}
+			} else if frequency == "1h" {
+				if lastTurboCrawl.IsZero() || now.Sub(lastTurboCrawl) >= 1*time.Hour {
+					lastTurboCrawl = now
+					go func() {
+						log.Printf("[Scheduler] Incremental crawl starting (1h interval)")
+						if err := c.Crawl(cfg.SourceURLs); err == nil {
+							notif.DispatchFollowedEvents()
+						}
+					}()
+				}
+			} else if frequency == "daily" {
 				// Normal daily schedule: crawl at 07:00 AM Asia/Dhaka
 				if nowLocal.Hour() == 7 && nowLocal.Minute() == 0 && lastDailyCrawlDay != currentDay {
 					lastDailyCrawlDay = currentDay
 					go func() {
 						log.Printf("[Scheduler] Daily scheduled crawl starting at 07:00 AM")
 						if err := c.Crawl(cfg.SourceURLs); err == nil {
-							// Send instant alert for any followed series
 							notif.DispatchFollowedEvents()
 						}
 					}()

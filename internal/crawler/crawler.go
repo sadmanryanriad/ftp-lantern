@@ -194,6 +194,17 @@ func (c *Crawler) Crawl(sourceURLs []string) error {
 	return nil
 }
 
+func DeriveSourceServer(sourceURL string) string {
+	u, err := url.Parse(sourceURL)
+	if err == nil {
+		parts := strings.Split(strings.Trim(u.Path, "/"), "/")
+		if len(parts) > 0 && parts[0] != "" {
+			return parts[0]
+		}
+	}
+	return "DHAKA-FLIX-12"
+}
+
 func DeriveCanonicalCategory(rawURL string) string {
 	decoded, _ := url.PathUnescape(rawURL)
 	lower := strings.ToLower(decoded)
@@ -255,6 +266,7 @@ func IsSeriesCategory(catName string) bool {
 
 func (c *Crawler) crawlSource(sourceURL string) error {
 	canonicalCategory := DeriveCanonicalCategory(sourceURL)
+	sourceServer := DeriveSourceServer(sourceURL)
 	c.statsLock.Lock()
 	c.currentSource = canonicalCategory
 	c.statsLock.Unlock()
@@ -269,13 +281,13 @@ func (c *Crawler) crawlSource(sourceURL string) error {
 		if !cat.IsDir {
 			continue
 		}
-		c.crawlCategory(canonicalCategory, cat.Name, cat.URL)
+		c.crawlCategory(sourceServer, canonicalCategory, cat.Name, cat.URL)
 	}
 
 	return nil
 }
 
-func (c *Crawler) crawlCategory(canonicalCategory, folderName, categoryURL string) {
+func (c *Crawler) crawlCategory(sourceServer, canonicalCategory, folderName, categoryURL string) {
 	c.statsLock.Lock()
 	c.currentSource = canonicalCategory
 	c.statsLock.Unlock()
@@ -304,15 +316,15 @@ func (c *Crawler) crawlCategory(canonicalCategory, folderName, categoryURL strin
 				continue
 			}
 			// Title folder mtime changed! (New season added to title)
-			c.crawlTitleFolder(canonicalCategory, it, releaseID)
+			c.crawlTitleFolder(sourceServer, canonicalCategory, it, releaseID)
 		} else {
 			// Brand new release
-			c.crawlTitleFolder(canonicalCategory, it, 0)
+			c.crawlTitleFolder(sourceServer, canonicalCategory, it, 0)
 		}
 	}
 }
 
-func (c *Crawler) crawlTitleFolder(categoryName string, it DirItem, existingReleaseID int64) {
+func (c *Crawler) crawlTitleFolder(sourceServer, categoryName string, it DirItem, existingReleaseID int64) {
 	c.statsLock.Lock()
 	c.currentFolder = it.Name
 	c.statsLock.Unlock()
@@ -386,9 +398,9 @@ func (c *Crawler) crawlTitleFolder(categoryName string, it DirItem, existingRele
 			hdrVal = 1
 		}
 		res, err := c.database.Exec(`
-			INSERT INTO releases (title_id, category, folder_url, folder_name, resolution, source, has_hdr, last_modified)
-			VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
-			titleID, categoryName, it.URL, it.Name, meta.Resolution, meta.Source, hdrVal, it.LastModified,
+			INSERT INTO releases (title_id, source_server, category, folder_url, folder_name, resolution, source, has_hdr, last_modified)
+			VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+			titleID, sourceServer, categoryName, it.URL, it.Name, meta.Resolution, meta.Source, hdrVal, it.LastModified,
 		)
 		if err != nil {
 			log.Printf("[Crawler] Insert release error: %v", err)
@@ -482,9 +494,11 @@ func (c *Crawler) crawlHotSet() {
 		SELECT t.id, r.id, r.folder_url, r.folder_name, r.category
 		FROM titles t
 		JOIN releases r ON r.title_id = t.id
-		WHERE t.is_following = 1 OR (
-			SELECT MAX(f.last_modified) FROM files f WHERE f.title_id = t.id AND f.gone_at IS NULL
-		) > datetime('now', '-45 days')
+		WHERE r.gone_at IS NULL AND (
+			t.is_following = 1 OR (
+				SELECT MAX(f.last_modified) FROM files f WHERE f.release_id = r.id AND f.gone_at IS NULL
+			) > datetime('now', '-45 days')
+		)
 	`
 	rows, err := c.database.Query(query)
 	if err != nil {
@@ -526,14 +540,14 @@ func (c *Crawler) crawlHotSet() {
 func (c *Crawler) emitEvent(kind string, titleID, releaseID int64, payload map[string]interface{}) {
 	data, _ := json.Marshal(payload)
 
-	notifiedAtVal := interface{}(nil)
+	var sentAtVal interface{} = nil
 	if c.isSeed {
-		notifiedAtVal = time.Now().UTC().Format(time.RFC3339)
+		sentAtVal = time.Now().UTC().Format(time.RFC3339)
 	}
 
 	_, _ = c.database.Exec(`
-		INSERT INTO events (kind, title_id, release_id, payload_json, notified_at)
-		VALUES (?, ?, ?, ?, ?)`,
-		kind, titleID, releaseID, string(data), notifiedAtVal,
+		INSERT INTO events (kind, title_id, release_id, payload_json, notified_at, instant_sent_at, digest_sent_at)
+		VALUES (?, ?, ?, ?, ?, ?, ?)`,
+		kind, titleID, releaseID, string(data), sentAtVal, sentAtVal, sentAtVal,
 	)
 }

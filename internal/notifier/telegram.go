@@ -82,7 +82,7 @@ func (n *Notifier) DispatchEvents() {
 		SELECT e.id, e.kind, e.title_id, t.name, t.year, t.thumb_hash, e.payload_json
 		FROM events e
 		JOIN titles t ON t.id = e.title_id
-		WHERE e.notified_at IS NULL AND e.failed_at IS NULL
+		WHERE e.digest_sent_at IS NULL AND e.failed_at IS NULL
 		ORDER BY e.created_at ASC
 		LIMIT 50
 	`)
@@ -132,7 +132,7 @@ func (n *Notifier) DispatchFollowedEvents() {
 		SELECT e.id, e.kind, e.title_id, t.name, t.year, t.thumb_hash, e.payload_json
 		FROM events e
 		JOIN titles t ON t.id = e.title_id
-		WHERE e.notified_at IS NULL AND e.failed_at IS NULL AND t.is_following = 1
+		WHERE e.instant_sent_at IS NULL AND e.failed_at IS NULL AND t.is_following = 1
 		ORDER BY e.created_at ASC
 	`)
 	if err != nil {
@@ -203,7 +203,7 @@ func (n *Notifier) sendFollowedInstantAlert(ev EventRow) {
 	if err != nil {
 		n.handleError(ev.ID, err)
 	} else {
-		_, _ = n.database.Exec("UPDATE events SET notified_at = CURRENT_TIMESTAMP WHERE id = ?", ev.ID)
+		_, _ = n.database.Exec("UPDATE events SET instant_sent_at = CURRENT_TIMESTAMP, notified_at = CURRENT_TIMESTAMP WHERE id = ?", ev.ID)
 	}
 }
 
@@ -246,7 +246,7 @@ func (n *Notifier) sendSingleEvent(ev EventRow) {
 	if err != nil {
 		n.handleError(ev.ID, err)
 	} else {
-		_, _ = n.database.Exec("UPDATE events SET notified_at = CURRENT_TIMESTAMP WHERE id = ?", ev.ID)
+		_, _ = n.database.Exec("UPDATE events SET instant_sent_at = CURRENT_TIMESTAMP, notified_at = CURRENT_TIMESTAMP WHERE id = ?", ev.ID)
 	}
 }
 
@@ -297,7 +297,7 @@ func (n *Notifier) sendBatchDigest(events []EventRow) {
 		}
 	} else {
 		for _, id := range successIDs {
-			_, _ = n.database.Exec("UPDATE events SET notified_at = CURRENT_TIMESTAMP WHERE id = ?", id)
+			_, _ = n.database.Exec("UPDATE events SET digest_sent_at = CURRENT_TIMESTAMP, notified_at = CURRENT_TIMESTAMP WHERE id = ?", id)
 		}
 	}
 }

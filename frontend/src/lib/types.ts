@@ -116,6 +116,7 @@ export interface SystemStatus {
 
 export interface SchedulerStatus {
   interval_minutes: number;
+  frequency?: string;
   next_scan_time?: string;
   turbo_mode: boolean;
   turbo_until?: string;

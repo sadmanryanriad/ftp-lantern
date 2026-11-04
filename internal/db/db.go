@@ -97,14 +97,16 @@ func (d *DB) migrate() error {
 	);
 
 	CREATE TABLE IF NOT EXISTS events (
-		id           INTEGER PRIMARY KEY AUTOINCREMENT,
-		kind         TEXT NOT NULL,
-		title_id     INTEGER NOT NULL REFERENCES titles(id) ON DELETE CASCADE,
-		release_id   INTEGER REFERENCES releases(id) ON DELETE CASCADE,
-		payload_json TEXT NOT NULL,
-		created_at   DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
-		notified_at  DATETIME,
-		failed_at    DATETIME
+		id              INTEGER PRIMARY KEY AUTOINCREMENT,
+		kind            TEXT NOT NULL,
+		title_id        INTEGER NOT NULL REFERENCES titles(id) ON DELETE CASCADE,
+		release_id      INTEGER REFERENCES releases(id) ON DELETE CASCADE,
+		payload_json    TEXT NOT NULL,
+		created_at      DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+		notified_at     DATETIME,
+		instant_sent_at DATETIME,
+		digest_sent_at  DATETIME,
+		failed_at       DATETIME
 	);
 
 	CREATE TABLE IF NOT EXISTS settings (
@@ -134,7 +136,15 @@ func (d *DB) migrate() error {
 	`
 
 	_, err := d.Exec(schema)
-	return err
+	if err != nil {
+		return err
+	}
+
+	// Safe idempotent column migrations
+	_, _ = d.Exec("ALTER TABLE events ADD COLUMN instant_sent_at DATETIME")
+	_, _ = d.Exec("ALTER TABLE events ADD COLUMN digest_sent_at DATETIME")
+
+	return nil
 }
 
 // Setting retrieves a string value from settings table with fallback

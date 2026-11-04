@@ -280,7 +280,11 @@
   function closeTitleDetail(shouldGoBack = true) {
     selectedTitleDetail = null;
     if (shouldGoBack && window.location.hash.startsWith('#/title/')) {
-      window.history.back();
+      if (window.history.state && window.history.state.modal === 'title') {
+        window.history.back();
+      } else {
+        window.history.replaceState(null, '', window.location.pathname);
+      }
     }
   }
 
@@ -294,7 +298,11 @@
   function closeSettings(shouldGoBack = true) {
     isSettingsOpen = false;
     if (shouldGoBack && window.location.hash === '#/settings') {
-      window.history.back();
+      if (window.history.state && window.history.state.modal === 'settings') {
+        window.history.back();
+      } else {
+        window.history.replaceState(null, '', window.location.pathname);
+      }
     }
   }
 

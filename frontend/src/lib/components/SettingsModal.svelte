@@ -16,7 +16,7 @@
     Bell
   } from '@lucide/svelte';
   import type { SystemStatus, SchedulerStatus } from '../types';
-  import { triggerCrawl, setTurboMode } from '../api';
+  import { triggerCrawl, setTurboMode, setSchedulerFrequency, triggerDbBackup } from '../api';
 
   let {
     isOpen = false,
@@ -35,6 +35,39 @@
   let crawlTriggering = $state(false);
   let crawlFeedback = $state<string | null>(null);
   let turboLoading = $state<number | null>(null);
+  let backupLoading = $state(false);
+  let backupFeedback = $state<string | null>(null);
+
+  const frequencyOptions = [
+    { label: 'Every 15 Minutes (Recommended)', value: '15m' },
+    { label: 'Every 30 Minutes', value: '30m' },
+    { label: 'Every 1 Hour', value: '1h' },
+    { label: 'Once Daily at 7:00 AM', value: 'daily' },
+    { label: 'Manual Scan Only', value: 'manual' },
+  ];
+
+  async function handleFrequencyChange(e: Event) {
+    const val = (e.target as HTMLSelectElement).value;
+    try {
+      await setSchedulerFrequency(val);
+      onRefresh();
+    } catch (err) {
+      console.error('Failed to set crawl frequency:', err);
+    }
+  }
+
+  async function handleBackup() {
+    backupLoading = true;
+    backupFeedback = null;
+    try {
+      const res = await triggerDbBackup();
+      backupFeedback = `Snapshot created: ${res.backup_path}`;
+    } catch (err: any) {
+      backupFeedback = `Backup error: ${err.message}`;
+    } finally {
+      backupLoading = false;
+    }
+  }
 
   // Turbo durations: 1h, 3h, 6h, 12h, 24h (1d), 72h (3d), 168h (7d max)
   const turboOptions = [
@@ -205,6 +238,43 @@
               <div class="text-sm font-bold text-zinc-200 mt-0.5">{status?.memory_alloc_mb ? `${status.memory_alloc_mb.toFixed(1)} MB` : '< 25 MB'}</div>
             </div>
           </div>
+
+          <div class="mt-3 pt-3 border-t border-zinc-800 flex items-center justify-between">
+            <span class="text-[11px] text-zinc-400">Consistent SQLite backup (non-locking VACUUM):</span>
+            <button
+              type="button"
+              onclick={handleBackup}
+              disabled={backupLoading}
+              class="px-2.5 py-1 rounded bg-zinc-800 hover:bg-zinc-700 text-zinc-200 text-xs font-semibold border border-zinc-750 transition-colors"
+            >
+              {backupLoading ? 'Creating snapshot...' : 'Snapshot Backup'}
+            </button>
+          </div>
+          {#if backupFeedback}
+            <div class="mt-2 text-[10px] font-mono text-emerald-400">{backupFeedback}</div>
+          {/if}
+        </div>
+
+        <!-- Automated Crawl Schedule Frequency -->
+        <div class="p-4 rounded-xl bg-zinc-950/80 border border-zinc-800">
+          <div class="flex items-center justify-between mb-2">
+            <div class="flex items-center gap-2">
+              <Clock class="w-4 h-4 text-amber-400" />
+              <h3 class="text-sm font-bold text-zinc-100">Automatic Crawl Rhythm</h3>
+            </div>
+            <select
+              value={scheduler?.frequency || '15m'}
+              onchange={handleFrequencyChange}
+              class="px-3 py-1.5 rounded-lg bg-zinc-900 border border-zinc-700 text-xs font-semibold text-zinc-100 focus:outline-none focus:border-amber-500"
+            >
+              {#each frequencyOptions as opt}
+                <option value={opt.value}>{opt.label}</option>
+              {/each}
+            </select>
+          </div>
+          <p class="text-[11px] text-zinc-400 leading-relaxed">
+            Because FTP-Lantern checks directory modified timestamps (Level-1 HTTP skip), incremental crawls take only 3–10 seconds. <strong>Every 15 Minutes</strong> keeps your library live with zero homelab load.
+          </p>
         </div>
 
         <!-- Turbo Scan Mode Section -->
