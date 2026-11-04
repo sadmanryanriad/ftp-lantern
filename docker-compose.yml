@@ -1,0 +1,31 @@
+services:
+  ftp-lantern:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: ftp-lantern
+    network_mode: host
+    restart: unless-stopped
+    volumes:
+      - lantern-data:/data
+    environment:
+      - PORT=8085
+      - SOURCE_URLS=http://172.16.50.12/DHAKA-FLIX-12/TV-WEB-Series/
+      - BASE_CRAWL_INTERVAL_MINUTES=60
+      - CRAWL_CONCURRENCY=4
+      - GOMEMLIMIT=96MiB
+      - MAX_THUMBS_MB=250
+      - PUBLIC_BASE_URL=${PUBLIC_BASE_URL:-http://localhost:8085}
+      - TELEGRAM_BOT_TOKEN=${TELEGRAM_BOT_TOKEN}
+      - TELEGRAM_ADMIN_CHAT_ID=${TELEGRAM_ADMIN_CHAT_ID}
+      - TZ=Asia/Dhaka
+      - LOG_LEVEL=info
+    deploy:
+      resources:
+        limits:
+          cpus: '0.50'
+          memory: 128M
+
+volumes:
+  lantern-data:
+    name: ftp-lantern-data

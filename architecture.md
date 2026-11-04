@@ -363,9 +363,9 @@ services:
       - BASE_CRAWL_INTERVAL_MINUTES=60
       - CRAWL_CONCURRENCY=4
       - GOMEMLIMIT=96MiB
-      - PUBLIC_BASE_URL=http://192.168.0.134:8085
+      - PUBLIC_BASE_URL=${PUBLIC_BASE_URL:-http://localhost:8085}
       - TELEGRAM_BOT_TOKEN=${TELEGRAM_BOT_TOKEN}
-      - TELEGRAM_ADMIN_CHAT_ID=1240674937
+      - TELEGRAM_ADMIN_CHAT_ID=${TELEGRAM_ADMIN_CHAT_ID}
       - TZ=Asia/Dhaka
       - LOG_LEVEL=info
     deploy:
@@ -382,7 +382,7 @@ volumes:
 ### 10.3 Multi-Stage Dockerfile with Healthcheck Subcommand
 ```dockerfile
 # Global ARG before first FROM for use across stages
-ARG GO_VERSION=1.23
+ARG GO_VERSION=1.26
 
 # Stage 1: Build Frontend Assets
 FROM node:20-alpine AS frontend-builder
