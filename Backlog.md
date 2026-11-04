@@ -6,41 +6,42 @@ Tracks roadmap items, technical debt, and future enhancements.
 
 ## 🚀 Active Sprint — MVP (Phased Implementation)
 
-- [ ] **Phase 0: Crawler Spike & Server Verification**
-  - [ ] Write a 50-line crawler test script against real ISP server (`http://172.16.50.12/DHAKA-FLIX-12/`)
-  - [ ] Verify HTML table layout, DOM parsing with `goquery`, and confirm timestamp behavior
-- [ ] **Phase 1: Project Scaffolding & Database Engine**
-  - [ ] Go 1.23+ module initialization with `modernc.org/sqlite`
-  - [ ] Schema migration (titles with `year DEFAULT 0`, releases with `category`, files, plays, events with `failed_at`, settings)
-  - [ ] FTS5 trigram virtual table with parameterized `LIKE` acceleration
-  - [ ] Embedded timezone data (`time/tzdata`) and CLI `healthcheck` subcommand
-- [ ] **Phase 2: Resilient Crawler & Parser**
-  - [ ] Multi-source HTTP crawler with non-blocking single-flight lock (`TryLock`)
-  - [ ] Category-level mtime checking (free season detection for cold shows)
-  - [ ] Dynamic hot-set scanner based on ISP server folder timestamps (`now - 45d` or `is_following`)
-  - [ ] Granular regex: split `resolution`, `source`, and `has_hdr` flag
-  - [ ] Subtree-scoped circuit breaker (abort deletions on HTTP 5xx or >20% loss in scanned subtree)
-- [ ] **Phase 3: Image Pipeline & Caching**
-  - [ ] Dedicated single-concurrency poster worker (`concurrency = 1`) with `GOMEMLIMIT=96MiB` guard
-  - [ ] Content-hashed thumb URLs (`/api/thumbs/:id-:hash.jpg`) with `immutable` caching
-- [ ] **Phase 4: Telegram Bot & Notifier**
-  - [ ] HTML escaping (`html.EscapeString`) for dynamic strings
-  - [ ] 4xx non-retryable error guard (mark `failed_at`, don't block queue)
-  - [ ] Message batching & length truncation (4000-char text, 1000-char caption)
-  - [ ] Dedicated long-polling bot listener for `/turbo`, `/status`, and `/scan` (whitelisted to Admin Chat ID)
-- [ ] **Phase 5: API & Player Dispatcher**
-  - [ ] Parameterized FTS trigram `LIKE` search + short-query prefix + sliding-window Levenshtein
-  - [ ] Encoded M3U playlist generator (single file & full season) with natural `SxxExx` sorting
-  - [ ] Android `intent://` launcher with `navigator.sendBeacon()` play tracking
-  - [ ] Play tracking (`plays` table) powering "Last played: S01E04 → Next: S01E05" and manual "Mark watched up to here"
-- [ ] **Phase 6: Modern Embedded Frontend**
-  - [ ] Svelte 5 / Vite SPA embedded via `go:embed`
-  - [ ] Spotlight search with instant typeahead dropdown, mini posters, and resolution badges
-  - [ ] "Continue Watching" shelf + "What's New" row + full poster grid
-  - [ ] Settings panel for Turbo Scan configuration
-- [ ] **Phase 7: Packaging & Dokploy Integration**
-  - [ ] Multi-stage Dockerfile (`golang:1.23-alpine` → `scratch` with tzdata + CA certs + `go build -o /ftp-lantern .`)
-  - [ ] `docker-compose.yml` with `network_mode: host`, named volume `lantern-data:/data`, and 128MB RAM / 0.5 CPU limits
+- [x] **Phase 0: Crawler Spike & Server Verification**
+  - [x] Write a 50-line crawler test script against real ISP server (`http://172.16.50.12/DHAKA-FLIX-12/`)
+  - [x] Verify HTML table layout, DOM parsing with `goquery`, and confirm timestamp behavior
+- [x] **Phase 1: Project Scaffolding & Database Engine**
+  - [x] Go 1.26 module initialization with `modernc.org/sqlite`
+  - [x] Schema migration (titles with `year DEFAULT 0`, releases with `category`, files, plays, events with `failed_at`, settings)
+  - [x] FTS5 trigram virtual table with parameterized `LIKE` acceleration
+  - [x] Embedded timezone data (`time/tzdata`) and CLI `healthcheck` subcommand
+- [x] **Phase 2: Resilient Crawler & Parser**
+  - [x] Multi-source HTTP crawler with non-blocking single-flight lock (`TryLock`)
+  - [x] Category-level mtime checking (free season detection for cold shows)
+  - [x] Dynamic hot-set scanner based on ISP server folder timestamps (`now - 45d` or `is_following`)
+  - [x] Granular regex: split `resolution`, `source`, and `has_hdr` flag
+  - [x] Subtree-scoped circuit breaker (abort deletions on HTTP 5xx or >20% loss in scanned subtree)
+- [x] **Phase 3: Image Pipeline & Caching**
+  - [x] Dedicated single-concurrency poster worker (`concurrency = 1`) with `GOMEMLIMIT=96MiB` guard
+  - [x] Content-hashed thumb URLs (`/api/thumbs/:id-:hash.jpg`) with `immutable` caching
+  - [x] LRU storage volume cap (`MAX_THUMBS_MB=250`) with auto-eviction and on-demand re-fetch
+- [x] **Phase 4: Telegram Bot & Notifier**
+  - [x] HTML escaping (`html.EscapeString`) for dynamic strings
+  - [x] 4xx/429/5xx non-retryable error guard (mark `failed_at`, don't block queue)
+  - [x] Message batching & item-boundary length truncation (3800-char text threshold)
+  - [x] Dedicated long-polling bot listener for `/turbo`, `/status`, and `/scan` (whitelisted to Admin Chat ID)
+- [x] **Phase 5: API & Player Dispatcher**
+  - [x] Parameterized FTS trigram `LIKE` search + short-query prefix + sliding-window Levenshtein
+  - [x] Encoded M3U playlist generator (single file & full season) with natural `SxxExx` sorting
+  - [x] Android `intent://` launcher with `navigator.sendBeacon()` play tracking
+  - [x] Play tracking (`plays` table) powering "Last played: S01E04 → Next: S01E05" and manual "Mark watched up to here"
+- [x] **Phase 6: Modern Embedded Frontend**
+  - [x] Svelte 5 / Vite SPA embedded via `go:embed`
+  - [x] Spotlight search with instant typeahead dropdown, mini posters, and resolution badges
+  - [x] "Continue Watching" shelf + "What's New" row + full poster grid
+  - [x] Settings panel for Turbo Scan configuration
+- [x] **Phase 7: Packaging & Dokploy Integration**
+  - [x] Multi-stage Dockerfile (`golang:1.26-alpine` → `scratch` with tzdata + CA certs + `go build -o /ftp-lantern .`)
+  - [x] `docker-compose.yml` with `network_mode: host`, named volume `lantern-data:/data`, and 128MB RAM / 0.5 CPU limits
 
 ---
 
