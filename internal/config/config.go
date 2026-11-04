@@ -21,7 +21,7 @@ type Config struct {
 }
 
 func Load() *Config {
-	port := getEnv("PORT", "8085")
+	port := getEnv("PORT", "8087")
 	dataDir := getEnv("DATA_DIR", "/data")
 	thumbsDir := getEnv("THUMBS_DIR", dataDir+"/thumbs")
 	publicBaseURL := getEnv("PUBLIC_BASE_URL", "http://localhost:"+port)

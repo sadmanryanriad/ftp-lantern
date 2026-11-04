@@ -193,6 +193,9 @@ func (c *Crawler) crawlTitleFolder(categoryName string, it DirItem, existingRele
 	}
 
 	meta := parser.ParseFolderMetadata(it.Name)
+	if strings.Contains(strings.ToLower(categoryName), "movie") || strings.Contains(strings.ToLower(it.URL), "movie") {
+		meta.Type = "movie"
+	}
 
 	var posterURL string
 	var subfolders []DirItem

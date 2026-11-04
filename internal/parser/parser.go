@@ -47,8 +47,13 @@ func NormalizeTitle(s string) string {
 
 // ParseFolderMetadata extracts title, year, resolution, source, and HDR from a title directory name
 func ParseFolderMetadata(folderName string) ParsedMetadata {
+	itemType := "movie"
+	if strings.Contains(strings.ToLower(folderName), "tv series") || strings.Contains(strings.ToLower(folderName), "mini series") {
+		itemType = "series"
+	}
+
 	meta := ParsedMetadata{
-		Type:       "series",
+		Type:       itemType,
 		Resolution: "Unknown",
 		Source:     "Unknown",
 	}
