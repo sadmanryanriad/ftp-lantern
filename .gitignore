@@ -1,0 +1,23 @@
+# Binaries & build artifacts
+ftp-lantern
+/dist
+/server/ui/dist
+/frontend/dist
+node_modules/
+
+# Local data & storage
+/data/
+*.db
+*.db-wal
+*.db-shm
+/thumbs/
+
+# Secrets & environment
+.env
+.env.local
+
+# IDE & OS
+.DS_Store
+.idea/
+.vscode/
+*.swp
