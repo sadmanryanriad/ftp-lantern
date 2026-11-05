@@ -13,10 +13,21 @@
     FolderKanban,
     Flame,
     Gauge,
-    Bell
+    Bell,
+    UploadCloud,
+    DownloadCloud,
+    Radio
   } from '@lucide/svelte';
   import type { SystemStatus, SchedulerStatus } from '../types';
-  import { triggerCrawl, setTurboMode, setSchedulerFrequency, triggerDbBackup } from '../api';
+  import {
+    triggerCrawl,
+    setTurboMode,
+    setSchedulerFrequency,
+    triggerDbBackup,
+    importDbBackup,
+    getNotificationMode,
+    setNotificationMode
+  } from '../api';
 
   let {
     isOpen = false,
@@ -37,22 +48,66 @@
   let turboLoading = $state<number | null>(null);
   let backupLoading = $state(false);
   let backupFeedback = $state<string | null>(null);
+  let importLoading = $state(false);
+  let importFeedback = $state<string | null>(null);
+  let notifyMode = $state<string>('following_only');
+  let fileInputRef: HTMLInputElement | null = $state(null);
 
-  const frequencyOptions = [
-    { label: 'Every 15 Minutes (Recommended)', value: '15m' },
-    { label: 'Every 30 Minutes', value: '30m' },
-    { label: 'Every 1 Hour', value: '1h' },
-    { label: 'Once Daily at 7:00 AM', value: 'daily' },
-    { label: 'Manual Scan Only', value: 'manual' },
+  // Load notification preference on open
+  $effect(() => {
+    if (isOpen) {
+      getNotificationMode().then((m) => {
+        notifyMode = m;
+      });
+    }
+  });
+
+  const frequencyCards = [
+    {
+      id: '15m',
+      title: '15-Min Pulse',
+      subtitle: 'Continuous incremental mtime checks',
+      recommended: true,
+      icon: Zap
+    },
+    {
+      id: '1h',
+      title: 'Hourly Check',
+      subtitle: 'Scans once every 60 minutes',
+      recommended: false,
+      icon: Clock
+    },
+    {
+      id: 'daily',
+      title: 'Daily at 7:00 AM',
+      subtitle: 'Single morning scan + 8:01 AM digest',
+      recommended: false,
+      icon: Flame
+    },
+    {
+      id: 'manual',
+      title: 'Manual Only',
+      subtitle: 'Zero automated scans. Standby only',
+      recommended: false,
+      icon: Gauge
+    }
   ];
 
-  async function handleFrequencyChange(e: Event) {
-    const val = (e.target as HTMLSelectElement).value;
+  async function handleSelectFrequency(freq: string) {
     try {
-      await setSchedulerFrequency(val);
+      await setSchedulerFrequency(freq);
       onRefresh();
     } catch (err) {
       console.error('Failed to set crawl frequency:', err);
+    }
+  }
+
+  async function handleNotificationModeChange(mode: string) {
+    notifyMode = mode;
+    try {
+      await setNotificationMode(mode);
+    } catch (err) {
+      console.error('Failed to set notification mode:', err);
     }
   }
 
@@ -66,6 +121,25 @@
       backupFeedback = `Backup error: ${err.message}`;
     } finally {
       backupLoading = false;
+    }
+  }
+
+  async function handleImportFile(e: Event) {
+    const input = e.target as HTMLInputElement;
+    if (!input.files || input.files.length === 0) return;
+    const file = input.files[0];
+
+    importLoading = true;
+    importFeedback = null;
+    try {
+      const res = await importDbBackup(file);
+      importFeedback = `Restored ${res.titles_count} titles from ${res.filename}!`;
+      onRefresh();
+    } catch (err: any) {
+      importFeedback = `Import failed: ${err.message}`;
+    } finally {
+      importLoading = false;
+      if (input) input.value = '';
     }
   }
 
@@ -119,60 +193,77 @@
 </script>
 
 {#if isOpen}
-  <div class="fixed inset-0 z-50 flex items-center justify-center p-3 sm:p-6 bg-zinc-950/85 backdrop-blur-md overflow-y-auto" role="dialog" aria-modal="true">
-    <!-- Backdrop click -->
-    <div
-      role="button"
-      tabindex="-1"
+  <div
+    class="fixed inset-0 z-50 flex items-center justify-center p-3 sm:p-4 bg-black/80 backdrop-blur-md animate-fade-in"
+    role="dialog"
+    aria-modal="true"
+    aria-labelledby="settings-title"
+    tabindex="-1"
+  >
+    <!-- Backdrop dismiss -->
+    <button
+      type="button"
       onclick={onClose}
-      onkeydown={(e) => { if (e.key === 'Enter') onClose(); }}
-      class="fixed inset-0 cursor-default"
-      aria-label="Close settings backdrop"
-    ></div>
+      class="absolute inset-0 w-full h-full cursor-default"
+      aria-label="Close modal"
+    ></button>
 
-    <!-- Modal Box -->
-    <div class="relative w-full max-w-2xl rounded-2xl bg-zinc-900 border border-zinc-800 shadow-2xl overflow-hidden z-10 animate-in fade-in zoom-in-95 duration-200">
-      
+    <!-- Modal Content -->
+    <div
+      class="relative w-full max-w-2xl max-h-[90vh] flex flex-col rounded-2xl bg-zinc-900 border border-zinc-800 shadow-2xl overflow-hidden z-10"
+    >
       <!-- Header -->
-      <div class="p-5 border-b border-zinc-800 flex items-center justify-between bg-zinc-950/60">
+      <div class="px-5 py-4 border-b border-zinc-800 flex items-center justify-between bg-zinc-950/70">
         <div class="flex items-center gap-2.5">
-          <div class="p-2 rounded-xl bg-amber-500/10 text-amber-400 border border-amber-500/20">
+          <div class="p-2 rounded-xl bg-amber-500/10 border border-amber-500/30 text-amber-400">
             <Flame class="w-5 h-5" />
           </div>
           <div>
-            <h2 class="text-base font-bold text-zinc-100">Index & System Settings</h2>
-            <p class="text-xs text-zinc-400">Library breakdown, Turbo crawl & storage persistence</p>
+            <h2 id="settings-title" class="text-base sm:text-lg font-bold text-zinc-100 flex items-center gap-2">
+              <span>Settings & System Telemetry</span>
+              {#if status?.is_crawling}
+                <span class="px-2 py-0.5 rounded-full text-[10px] font-mono font-bold bg-amber-500/20 text-amber-300 border border-amber-500/30 animate-pulse">
+                  SCANNING
+                </span>
+              {/if}
+            </h2>
+            <p class="text-xs text-zinc-400">
+              Live homelab resource usage, crawl automation rhythm & storage persistence
+            </p>
           </div>
         </div>
-
         <button
           type="button"
           onclick={onClose}
           class="p-2 rounded-xl bg-zinc-850 hover:bg-zinc-800 text-zinc-400 hover:text-zinc-100 transition-colors"
-          aria-label="Close modal"
+          aria-label="Close"
         >
           <X class="w-4 h-4" />
         </button>
       </div>
 
-      <!-- Content -->
-      <div class="p-5 space-y-5 max-h-[82vh] overflow-y-auto">
+      <!-- Scrollable Body -->
+      <div class="flex-1 overflow-y-auto p-4 sm:p-6 space-y-5">
 
-        <!-- Library Index Breakdown Section -->
+        <!-- Live Index Breakdown -->
         <div>
-          <h3 class="text-xs font-mono uppercase text-zinc-400 tracking-wider mb-2.5 flex items-center gap-2">
-            <Database class="w-3.5 h-3.5 text-amber-400" />
-            <span>Indexed Library Breakdown</span>
-          </h3>
+          <div class="flex items-center justify-between mb-2">
+            <h3 class="text-xs font-mono font-bold uppercase tracking-wider text-zinc-400">
+              Indexed Library Breakdown
+            </h3>
+            <span class="text-[11px] font-mono text-zinc-500">
+              Uptime: {status?.uptime || 'Active'}
+            </span>
+          </div>
 
-          <div class="grid grid-cols-2 sm:grid-cols-4 gap-2.5 font-mono text-xs">
+          <div class="grid grid-cols-2 sm:grid-cols-4 gap-2 text-xs">
             <!-- Movies -->
             <div class="p-3 rounded-xl bg-zinc-950/80 border border-zinc-800">
               <div class="flex items-center gap-1.5 text-zinc-400 mb-1">
                 <Film class="w-3.5 h-3.5 text-amber-400" />
                 <span>Movies</span>
               </div>
-              <div class="text-base font-bold text-zinc-100">
+              <div class="text-lg font-bold text-zinc-100">
                 {status?.movies_count?.toLocaleString() ?? 0}
               </div>
             </div>
@@ -183,7 +274,7 @@
                 <Tv class="w-3.5 h-3.5 text-sky-400" />
                 <span>TV Series</span>
               </div>
-              <div class="text-base font-bold text-zinc-100">
+              <div class="text-lg font-bold text-zinc-100">
                 {status?.series_count?.toLocaleString() ?? 0}
               </div>
             </div>
@@ -194,7 +285,7 @@
                 <FolderKanban class="w-3.5 h-3.5 text-emerald-400" />
                 <span>Others & Docs</span>
               </div>
-              <div class="text-base font-bold text-zinc-100">
+              <div class="text-lg font-bold text-zinc-100">
                 {status?.others_count?.toLocaleString() ?? 0}
               </div>
             </div>
@@ -205,79 +296,194 @@
                 <HardDrive class="w-3.5 h-3.5 text-violet-400" />
                 <span>Media Files</span>
               </div>
-              <div class="text-base font-bold text-amber-300">
+              <div class="text-lg font-bold text-amber-300">
                 {status?.files_count?.toLocaleString() ?? 0}
               </div>
             </div>
           </div>
         </div>
 
-        <!-- Storage & Persistence Telemetry -->
-        <div class="p-4 rounded-xl bg-zinc-950/60 border border-zinc-800 text-xs">
+        <!-- Real Disk Storage Breakdown -->
+        <div class="p-4 rounded-xl bg-zinc-950/70 border border-zinc-800 text-xs">
           <div class="flex items-center justify-between mb-2">
-            <span class="font-bold text-zinc-200">Storage Persistence (Dokploy Volume)</span>
+            <div class="flex items-center gap-2">
+              <Database class="w-4 h-4 text-emerald-400" />
+              <span class="font-bold text-zinc-200">Disk Storage & Hardware Usage</span>
+            </div>
             <span class="font-mono text-emerald-400 bg-emerald-500/10 px-2 py-0.5 rounded border border-emerald-500/20">
-              DISK WAL MODE (PERSISTENT)
+              DISK WAL MODE
             </span>
           </div>
-          <p class="text-zinc-400 mb-3 text-[11px] leading-relaxed">
-            Index is saved permanently to host disk at <code class="text-zinc-300 bg-zinc-800 px-1 py-0.5 rounded">ftp-lantern-data:/data/lantern.db</code>. It is NOT kept in RAM and survives all deployments and restarts.
-          </p>
 
-          <div class="grid grid-cols-2 sm:grid-cols-3 gap-2 font-mono text-[11px]">
+          <div class="grid grid-cols-2 sm:grid-cols-4 gap-2 font-mono text-[11px] mb-3">
             <div class="p-2.5 rounded-lg bg-zinc-900 border border-zinc-800">
-              <span class="text-zinc-500">Database Size</span>
-              <div class="text-sm font-bold text-zinc-200 mt-0.5">{status?.db_size_human || '< 15 MB'}</div>
+              <span class="text-zinc-500">Database on Disk</span>
+              <div class="text-sm font-bold text-zinc-200 mt-0.5">{status?.db_size_human || '0 B'}</div>
             </div>
             <div class="p-2.5 rounded-lg bg-zinc-900 border border-zinc-800">
-              <span class="text-zinc-500">Thumbnail Cache</span>
-              <div class="text-sm font-bold text-zinc-200 mt-0.5">{status?.thumbs_size_human || '< 10 MB'}</div>
+              <span class="text-zinc-500">Thumbnails</span>
+              <div class="text-sm font-bold text-zinc-200 mt-0.5">{status?.thumbs_size_human || '0 B'}</div>
             </div>
-            <div class="p-2.5 rounded-lg bg-zinc-900 border border-zinc-800 col-span-2 sm:col-span-1">
+            <div class="p-2.5 rounded-lg bg-zinc-900 border border-zinc-800">
+              <span class="text-zinc-500">Total Volume Size</span>
+              <div class="text-sm font-bold text-amber-300 mt-0.5">{status?.total_volume_human || status?.db_size_human || '0 B'}</div>
+            </div>
+            <div class="p-2.5 rounded-lg bg-zinc-900 border border-zinc-800">
               <span class="text-zinc-500">RAM Allocation</span>
-              <div class="text-sm font-bold text-zinc-200 mt-0.5">{status?.memory_alloc_mb ? `${status.memory_alloc_mb.toFixed(1)} MB` : '< 25 MB'}</div>
+              <div class="text-sm font-bold text-zinc-200 mt-0.5">{status?.ram_alloc_mb || '< 25 MB'}</div>
             </div>
           </div>
 
-          <div class="mt-3 pt-3 border-t border-zinc-800 flex items-center justify-between">
-            <span class="text-[11px] text-zinc-400">Consistent SQLite backup (non-locking VACUUM):</span>
-            <button
-              type="button"
-              onclick={handleBackup}
-              disabled={backupLoading}
-              class="px-2.5 py-1 rounded bg-zinc-800 hover:bg-zinc-700 text-zinc-200 text-xs font-semibold border border-zinc-750 transition-colors"
-            >
-              {backupLoading ? 'Creating snapshot...' : 'Snapshot Backup'}
-            </button>
+          <!-- Backup & Disaster Recovery Actions -->
+          <div class="pt-3 border-t border-zinc-800/80 flex flex-col sm:flex-row sm:items-center justify-between gap-2.5">
+            <div>
+              <span class="font-semibold text-zinc-300 block">Doomsday Backup & Restore</span>
+              <span class="text-[11px] text-zinc-500">Atomic non-locking SQLite snapshot (`VACUUM INTO`) or manual index restore</span>
+            </div>
+
+            <div class="flex items-center gap-2">
+              <!-- Export Snapshot -->
+              <button
+                type="button"
+                onclick={handleBackup}
+                disabled={backupLoading}
+                class="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-zinc-850 hover:bg-zinc-800 text-zinc-200 text-xs font-semibold border border-zinc-700 transition-colors"
+              >
+                <DownloadCloud class="w-3.5 h-3.5 text-zinc-400" />
+                <span>{backupLoading ? 'Backing up...' : 'Snapshot Backup'}</span>
+              </button>
+
+              <!-- Import Backup Button -->
+              <button
+                type="button"
+                onclick={() => fileInputRef?.click()}
+                disabled={importLoading}
+                class="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-amber-500/10 hover:bg-amber-500/20 text-amber-300 text-xs font-semibold border border-amber-500/30 transition-colors"
+              >
+                <UploadCloud class="w-3.5 h-3.5 text-amber-400" />
+                <span>{importLoading ? 'Importing...' : 'Import Backup'}</span>
+              </button>
+              <input
+                bind:this={fileInputRef}
+                type="file"
+                accept=".db,.sqlite,.sqlite3"
+                class="hidden"
+                onchange={handleImportFile}
+              />
+            </div>
           </div>
+
           {#if backupFeedback}
             <div class="mt-2 text-[10px] font-mono text-emerald-400">{backupFeedback}</div>
           {/if}
+          {#if importFeedback}
+            <div class="mt-2 text-[10px] font-mono text-amber-300">{importFeedback}</div>
+          {/if}
         </div>
 
-        <!-- Automated Crawl Schedule Frequency -->
-        <div class="p-4 rounded-xl bg-zinc-950/80 border border-zinc-800">
-          <div class="flex items-center justify-between mb-2">
+        <!-- Crawl Rhythm / Automation Mode Selector (UX Cards) -->
+        <div class="p-4 rounded-xl bg-zinc-950/70 border border-zinc-800">
+          <div class="flex items-center justify-between mb-3">
             <div class="flex items-center gap-2">
               <Clock class="w-4 h-4 text-amber-400" />
               <h3 class="text-sm font-bold text-zinc-100">Automatic Crawl Rhythm</h3>
             </div>
-            <select
-              value={scheduler?.frequency || '15m'}
-              onchange={handleFrequencyChange}
-              class="px-3 py-1.5 rounded-lg bg-zinc-900 border border-zinc-700 text-xs font-semibold text-zinc-100 focus:outline-none focus:border-amber-500"
-            >
-              {#each frequencyOptions as opt}
-                <option value={opt.value}>{opt.label}</option>
-              {/each}
-            </select>
+            <span class="text-[11px] font-mono text-zinc-400">
+              Active: <strong class="text-amber-400">{scheduler?.frequency || '15m'}</strong>
+            </span>
           </div>
-          <p class="text-[11px] text-zinc-400 leading-relaxed">
-            Because FTP-Lantern checks directory modified timestamps (Level-1 HTTP skip), incremental crawls take only 3–10 seconds. <strong>Every 15 Minutes</strong> keeps your library live with zero homelab load.
-          </p>
+
+          <div class="grid grid-cols-1 sm:grid-cols-2 gap-2.5">
+            {#each frequencyCards as card}
+              {@const Icon = card.icon}
+              {@const isSelected = (scheduler?.frequency || '15m') === card.id}
+              <button
+                type="button"
+                onclick={() => handleSelectFrequency(card.id)}
+                class="p-3 rounded-xl border text-left transition-all relative {isSelected
+                  ? 'bg-amber-500/10 border-amber-500/50 shadow-md shadow-amber-500/10 ring-1 ring-amber-500/30'
+                  : 'bg-zinc-900/60 border-zinc-800 hover:border-zinc-700 hover:bg-zinc-900'}"
+              >
+                <div class="flex items-center justify-between mb-1">
+                  <div class="flex items-center gap-2">
+                    <Icon class="w-4 h-4 {isSelected ? 'text-amber-400' : 'text-zinc-400'}" />
+                    <span class="font-bold text-xs {isSelected ? 'text-amber-300' : 'text-zinc-200'}">
+                      {card.title}
+                    </span>
+                  </div>
+                  {#if card.recommended}
+                    <span class="px-1.5 py-0.5 rounded text-[9px] font-bold font-mono bg-emerald-500/20 text-emerald-400 border border-emerald-500/30">
+                      RECOMMENDED
+                    </span>
+                  {/if}
+                </div>
+                <p class="text-[11px] text-zinc-400 leading-tight">
+                  {card.subtitle}
+                </p>
+              </button>
+            {/each}
+          </div>
         </div>
 
-        <!-- Turbo Scan Mode Section -->
+        <!-- Telegram Notification Preference (Radio Group) -->
+        <div class="p-4 rounded-xl bg-zinc-950/70 border border-zinc-800 text-xs">
+          <div class="flex items-center gap-2 mb-2">
+            <Bell class="w-4 h-4 text-amber-400" />
+            <h3 class="text-sm font-bold text-zinc-100">Telegram Notification Filter</h3>
+          </div>
+          <p class="text-[11px] text-zinc-400 mb-3">
+            Choose what sends instant push alerts to your Telegram chat:
+          </p>
+
+          <div class="space-y-2">
+            <label class="flex items-center gap-2.5 p-2.5 rounded-lg bg-zinc-900/60 border border-zinc-800 cursor-pointer hover:bg-zinc-900 transition-colors">
+              <input
+                type="radio"
+                name="notify_mode"
+                value="following_only"
+                checked={notifyMode === 'following_only'}
+                onchange={() => handleNotificationModeChange('following_only')}
+                class="text-amber-500 focus:ring-amber-500/30"
+              />
+              <div>
+                <span class="font-semibold text-zinc-200 block text-xs">Starred / Followed Shows Only (Recommended)</span>
+                <span class="text-[10px] text-zinc-500">Only receive instant alerts when new episodes land for series you clicked "Follow" on.</span>
+              </div>
+            </label>
+
+            <label class="flex items-center gap-2.5 p-2.5 rounded-lg bg-zinc-900/60 border border-zinc-800 cursor-pointer hover:bg-zinc-900 transition-colors">
+              <input
+                type="radio"
+                name="notify_mode"
+                value="all"
+                checked={notifyMode === 'all'}
+                onchange={() => handleNotificationModeChange('all')}
+                class="text-amber-500 focus:ring-amber-500/30"
+              />
+              <div>
+                <span class="font-semibold text-zinc-200 block text-xs">All New Movies & Series</span>
+                <span class="text-[10px] text-zinc-500">Receive an instant Telegram notification whenever any new movie or show is added to the server.</span>
+              </div>
+            </label>
+
+            <label class="flex items-center gap-2.5 p-2.5 rounded-lg bg-zinc-900/60 border border-zinc-800 cursor-pointer hover:bg-zinc-900 transition-colors">
+              <input
+                type="radio"
+                name="notify_mode"
+                value="muted"
+                checked={notifyMode === 'muted'}
+                onchange={() => handleNotificationModeChange('muted')}
+                class="text-amber-500 focus:ring-amber-500/30"
+              />
+              <div>
+                <span class="font-semibold text-zinc-200 block text-xs">Mute Push Alerts (Daily 8:01 AM Digest Only)</span>
+                <span class="text-[10px] text-zinc-500">Silence instant alerts entirely; only receive the consolidated morning report at 08:01 AM.</span>
+              </div>
+            </label>
+          </div>
+        </div>
+
+        <!-- 15-Minute Turbo Crawl Mode -->
         <div class="p-4 rounded-xl bg-zinc-950/80 border border-amber-500/30 glow-amber">
           <div class="flex items-center justify-between mb-2">
             <div class="flex items-center gap-2">
@@ -286,19 +492,17 @@
             </div>
             {#if scheduler?.turbo_mode}
               <span class="px-2 py-0.5 rounded-full text-[10px] font-mono font-bold bg-amber-500/20 text-amber-300 border border-amber-500/40">
-                ACTIVE (15m interval)
+                ACTIVE
               </span>
             {:else}
               <span class="px-2 py-0.5 rounded-full text-[10px] font-mono bg-zinc-800 text-zinc-400">
-                DAILY (7:00 AM)
+                STANDBY
               </span>
             {/if}
           </div>
 
           <p class="text-xs text-zinc-400 mb-3 leading-relaxed">
-            Normally, index auto-refreshes <strong>once everyday at 7:00 AM</strong>, followed by a Telegram summary at <strong>8:01 AM</strong>. Followed titles always receive instant alerts.
-            <br />
-            When you want rapid live updates, turn on Turbo mode to scan <strong>every 15 minutes</strong> for up to 7 days:
+            When you're waiting for new releases, activate Turbo to force a scan <strong>every 15 minutes</strong> for a set duration:
           </p>
 
           <div class="flex flex-wrap items-center gap-1.5">
@@ -317,7 +521,7 @@
           </div>
         </div>
 
-        <!-- Manual Crawl Trigger -->
+        <!-- Manual Quick Scan Trigger -->
         <div class="p-4 rounded-xl bg-zinc-950/60 border border-zinc-800 flex flex-col sm:flex-row sm:items-center justify-between gap-3">
           <div>
             <div class="flex items-center gap-2">
@@ -325,7 +529,7 @@
               <h3 class="text-sm font-semibold text-zinc-200">Manual Quick Scan</h3>
             </div>
             <p class="text-xs text-zinc-400 mt-1">
-              Checks mtimes and indexes only newly added files without re-indexing unchanged folders.
+              Checks directory mtimes and indexes only newly added files without re-indexing unchanged folders.
             </p>
           </div>
 

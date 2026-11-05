@@ -11,6 +11,7 @@ import (
 	"sort"
 	"strconv"
 	"strings"
+	"sync/atomic"
 	"time"
 
 	"github.com/sadmanryanriad/ftp-lantern/internal/config"
@@ -22,20 +23,47 @@ import (
 )
 
 type Server struct {
-	cfg       *config.Config
-	database  *db.DB
-	crawler   *crawler.Crawler
-	thumbsMgr *thumbs.Manager
-	startTime time.Time
+	cfg          *config.Config
+	database     *db.DB
+	crawler      *crawler.Crawler
+	thumbsMgr    *thumbs.Manager
+	startTime    time.Time
+	ispConnected atomic.Bool
+	ispLatencyMs atomic.Int64
 }
 
 func NewServer(cfg *config.Config, database *db.DB, c *crawler.Crawler, tm *thumbs.Manager) *Server {
-	return &Server{
+	s := &Server{
 		cfg:       cfg,
 		database:  database,
 		crawler:   c,
 		thumbsMgr: tm,
 		startTime: time.Now(),
+	}
+	s.ispConnected.Store(true) // Optimistically true on start
+	go s.startIspHealthChecker()
+	return s
+}
+
+func (s *Server) startIspHealthChecker() {
+	client := &http.Client{Timeout: 3 * time.Second}
+	for {
+		if len(s.cfg.SourceURLs) > 0 {
+			start := time.Now()
+			req, err := http.NewRequest("GET", s.cfg.SourceURLs[0], nil)
+			if err == nil {
+				req.Header.Set("Range", "bytes=0-0")
+				resp, err := client.Do(req)
+				if err == nil {
+					_ = resp.Body.Close()
+					s.ispConnected.Store(resp.StatusCode < 500)
+					s.ispLatencyMs.Store(time.Since(start).Milliseconds())
+				} else {
+					s.ispConnected.Store(false)
+				}
+			}
+		}
+		time.Sleep(15 * time.Second)
 	}
 }
 
@@ -54,6 +82,9 @@ func (s *Server) RegisterRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("POST /api/scheduler/turbo", s.handleSetTurbo)
 	mux.HandleFunc("POST /api/scheduler/frequency", s.handleSetFrequency)
 	mux.HandleFunc("POST /api/backup", s.handleBackup)
+	mux.HandleFunc("POST /api/backup/import", s.handleImportBackup)
+	mux.HandleFunc("GET /api/settings/notifications", s.handleGetNotificationMode)
+	mux.HandleFunc("POST /api/settings/notifications", s.handleSetNotificationMode)
 	mux.HandleFunc("POST /api/crawl/trigger", s.handleTriggerCrawl)
 	mux.HandleFunc("GET /api/status", s.handleStatus)
 }
@@ -825,6 +856,85 @@ func (s *Server) handleBackup(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, map[string]interface{}{"ok": true, "backup_path": backupPath})
 }
 
+func (s *Server) handleImportBackup(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+
+	file, header, err := r.FormFile("database")
+	if err != nil {
+		file, header, err = r.FormFile("file")
+		if err != nil {
+			http.Error(w, "Missing database file upload (field: database or file)", http.StatusBadRequest)
+			return
+		}
+	}
+	defer file.Close()
+
+	// Verify SQLite magic header: first 16 bytes must start with "SQLite format 3"
+	magic := make([]byte, 16)
+	if _, err := io.ReadFull(file, magic); err != nil || string(magic[:15]) != "SQLite format 3" {
+		http.Error(w, "Invalid SQLite database file header", http.StatusBadRequest)
+		return
+	}
+
+	if seeker, ok := file.(io.Seeker); ok {
+		_, _ = seeker.Seek(0, io.SeekStart)
+	}
+
+	tempPath := filepath.Join(s.cfg.DataDir, "lantern_import_temp.db")
+	_ = os.Remove(tempPath)
+	out, err := os.Create(tempPath)
+	if err != nil {
+		http.Error(w, fmt.Sprintf("Failed to create temporary file: %v", err), http.StatusInternalServerError)
+		return
+	}
+	if _, err := io.Copy(out, file); err != nil {
+		out.Close()
+		http.Error(w, fmt.Sprintf("Failed to save database file: %v", err), http.StatusInternalServerError)
+		return
+	}
+	out.Close()
+
+	dbPath := filepath.Join(s.cfg.DataDir, "lantern.db")
+	_ = os.Remove(dbPath + "-wal")
+	_ = os.Remove(dbPath + "-shm")
+	if err := os.Rename(tempPath, dbPath); err != nil {
+		http.Error(w, fmt.Sprintf("Failed to replace database: %v", err), http.StatusInternalServerError)
+		return
+	}
+
+	titleCount, _ := s.database.TitleCount()
+	writeJSON(w, map[string]interface{}{
+		"ok":           true,
+		"filename":     header.Filename,
+		"titles_count": titleCount,
+		"message":      "Database restored successfully",
+	})
+}
+
+func (s *Server) handleGetNotificationMode(w http.ResponseWriter, r *http.Request) {
+	mode := s.database.GetSetting("telegram_notify_mode", "following_only")
+	writeJSON(w, map[string]interface{}{"mode": mode})
+}
+
+func (s *Server) handleSetNotificationMode(w http.ResponseWriter, r *http.Request) {
+	var req struct {
+		Mode string `json:"mode"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		http.Error(w, err.Error(), http.StatusBadRequest)
+		return
+	}
+	mode := strings.ToLower(strings.TrimSpace(req.Mode))
+	if mode != "following_only" && mode != "all" && mode != "muted" {
+		mode = "following_only"
+	}
+	_ = s.database.SetSetting("telegram_notify_mode", mode)
+	writeJSON(w, map[string]interface{}{"ok": true, "mode": mode})
+}
+
 func (s *Server) handleSetTurbo(w http.ResponseWriter, r *http.Request) {
 	var req struct {
 		IntervalMinutes int `json:"interval_minutes"`
@@ -875,16 +985,8 @@ func (s *Server) handleStatus(w http.ResponseWriter, r *http.Request) {
 		FROM titles
 	`).Scan(&moviesCount, &seriesCount, &othersCount)
 
-	// Check ISP gateway reachability
-	ispConnected := false
-	if len(s.cfg.SourceURLs) > 0 {
-		client := http.Client{Timeout: 2 * time.Second}
-		resp, err := client.Head(s.cfg.SourceURLs[0])
-		if err == nil {
-			_ = resp.Body.Close()
-			ispConnected = (resp.StatusCode == http.StatusOK)
-		}
-	}
+	// Background ISP gateway reachability
+	ispConnected := s.ispConnected.Load()
 
 	var m runtime.MemStats
 	runtime.ReadMemStats(&m)
@@ -895,7 +997,13 @@ func (s *Server) handleStatus(w http.ResponseWriter, r *http.Request) {
 	var dbSizeBytes int64
 	dbPath := filepath.Join(s.cfg.DataDir, "lantern.db")
 	if fi, err := os.Stat(dbPath); err == nil {
-		dbSizeBytes = fi.Size()
+		dbSizeBytes += fi.Size()
+	}
+	if fi, err := os.Stat(dbPath + "-wal"); err == nil {
+		dbSizeBytes += fi.Size()
+	}
+	if fi, err := os.Stat(dbPath + "-shm"); err == nil {
+		dbSizeBytes += fi.Size()
 	}
 
 	var thumbsSizeBytes int64
@@ -907,10 +1015,13 @@ func (s *Server) handleStatus(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
+	totalVolumeBytes := dbSizeBytes + thumbsSizeBytes
+
 	writeJSON(w, map[string]interface{}{
 		"status":                  "ok",
 		"bdix_connected":          ispConnected,
 		"isp_connected":           ispConnected,
+		"isp_latency_ms":          s.ispLatencyMs.Load(),
 		"titles_count":            titleCount,
 		"files_count":             fileCount,
 		"releases_count":          releaseCount,
@@ -934,6 +1045,8 @@ func (s *Server) handleStatus(w http.ResponseWriter, r *http.Request) {
 		"db_size_human":           formatBytes(dbSizeBytes),
 		"thumbs_size_bytes":       thumbsSizeBytes,
 		"thumbs_size_human":       formatBytes(thumbsSizeBytes),
+		"total_volume_bytes":      totalVolumeBytes,
+		"total_volume_human":      formatBytes(totalVolumeBytes),
 		"ram_alloc_mb":            fmt.Sprintf("%.2f MB", float64(m.Alloc)/(1024*1024)),
 		"ram_sys_mb":              fmt.Sprintf("%.2f MB", float64(m.Sys)/(1024*1024)),
 	})

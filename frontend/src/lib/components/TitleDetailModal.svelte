@@ -20,6 +20,8 @@
     formatBytes,
     downloadM3U,
     playOnAndroid,
+    playOnMPV,
+    getMPVCommand,
     playOnPotPlayer,
     playOnVLC,
     recordPlay,
@@ -141,6 +143,18 @@
       }, 2000);
     } catch (err) {
       console.error('Failed to copy stream link:', err);
+    }
+  }
+
+  async function copyMPVCommand(file: MediaFile) {
+    try {
+      await navigator.clipboard.writeText(getMPVCommand(file.file_url));
+      copiedFileId = file.id;
+      setTimeout(() => {
+        if (copiedFileId === file.id) copiedFileId = null;
+      }, 2000);
+    } catch (err) {
+      console.error('Failed to copy MPV command:', err);
     }
   }
 </script>
@@ -312,17 +326,17 @@
                 </div>
               </div>
 
-              <!-- Stream actions buttons: PotPlayer, VLC, Android, Preview, Copy -->
+              <!-- Stream actions buttons: MPV (Primary), VLC, PotPlayer, Android, Preview, Copy -->
               <div class="flex items-center gap-1.5 sm:gap-2 flex-wrap flex-shrink-0">
-                <!-- 1-Click PotPlayer Launch (No download!) -->
+                <!-- 1-Click MPV Launch (Primary) -->
                 <button
                   type="button"
-                  onclick={() => playOnPotPlayer(ep.file_url, ep.id)}
-                  class="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-amber-500/15 hover:bg-amber-500/25 text-amber-300 text-xs font-semibold border border-amber-500/30 transition-colors"
-                  title="Direct 1-Click Launch in Daum PotPlayer (Zero download required!)"
+                  onclick={() => playOnMPV(ep.file_url, ep.id)}
+                  class="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-gradient-to-r from-amber-500/20 to-orange-500/20 hover:from-amber-500/30 hover:to-orange-500/30 text-amber-300 text-xs font-bold border border-amber-500/40 shadow-sm transition-all hover:scale-105 active:scale-95"
+                  title="Direct 1-Click Launch in MPV Player"
                 >
-                  <Play class="w-3.5 h-3.5 fill-current" />
-                  <span>PotPlayer</span>
+                  <Play class="w-3.5 h-3.5 fill-current text-amber-400" />
+                  <span>MPV</span>
                 </button>
 
                 <!-- 1-Click VLC Launch -->
@@ -334,6 +348,16 @@
                 >
                   <Monitor class="w-3.5 h-3.5 text-orange-400" />
                   <span>VLC</span>
+                </button>
+
+                <!-- 1-Click PotPlayer Launch (Alternative) -->
+                <button
+                  type="button"
+                  onclick={() => playOnPotPlayer(ep.file_url, ep.id)}
+                  class="hidden sm:inline-flex items-center gap-1.5 px-2 py-1.5 rounded-lg bg-zinc-850 hover:bg-zinc-800 text-zinc-300 text-xs font-medium border border-zinc-800 transition-colors"
+                  title="Direct 1-Click Launch in Daum PotPlayer"
+                >
+                  <span>PotPlayer</span>
                 </button>
 
                 <!-- Android Intent -->
@@ -371,6 +395,16 @@
                   {:else}
                     <Copy class="w-3.5 h-3.5" />
                   {/if}
+                </button>
+
+                <!-- Copy MPV CLI Command -->
+                <button
+                  type="button"
+                  onclick={() => copyMPVCommand(ep)}
+                  class="px-2 py-1.5 rounded-lg bg-zinc-850 hover:bg-zinc-800 text-[11px] font-mono text-zinc-400 hover:text-zinc-200 border border-zinc-800 transition-colors"
+                  title="Copy 'mpv URL' CLI command"
+                >
+                  CLI
                 </button>
 
                 <!-- Download M3U playlist file -->

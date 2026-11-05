@@ -375,11 +375,31 @@
 
     window.addEventListener('popstate', handlePopState);
 
-    // Periodic telemetry polling every 12 seconds
-    const interval = setInterval(loadSystemHealth, 12000);
+    // Live responsive polling: 2s when crawling, 6s when idle
+    let isCurrentlyCrawling = false;
+    let pollTimer: any = null;
+
+    async function pollHealth() {
+      await loadSystemHealth();
+      const wasCrawling = isCurrentlyCrawling;
+      isCurrentlyCrawling = Boolean(status?.is_crawling);
+
+      if (wasCrawling && !isCurrentlyCrawling) {
+        loadShelves();
+        if (activeTab !== 'home') {
+          loadGrid(false);
+        }
+      }
+
+      const nextDelay = isCurrentlyCrawling ? 2000 : 6000;
+      pollTimer = setTimeout(pollHealth, nextDelay);
+    }
+
+    pollHealth();
+
     return () => {
       window.removeEventListener('popstate', handlePopState);
-      clearInterval(interval);
+      if (pollTimer) clearTimeout(pollTimer);
     };
   });
 </script>
@@ -439,7 +459,37 @@
           <span>⚡</span>
           <span>{status?.files_count?.toLocaleString() || 0} Total Files</span>
         </div>
+
+        <!-- Disk Storage Stat Pill -->
+        <button
+          type="button"
+          onclick={() => openSettings(true)}
+          class="inline-flex items-center gap-1.5 px-3 py-1 rounded-full text-xs font-mono font-medium bg-zinc-900/80 hover:bg-zinc-850 border border-zinc-800 text-emerald-400 transition-colors cursor-pointer"
+          title="Total persistent disk storage used by database & poster thumbnails"
+        >
+          <span>💾</span>
+          <span>{status?.total_volume_human || status?.db_size_human || '0 B'} on Disk</span>
+        </button>
       </div>
+
+      <!-- Live Indexing Progress Banner (Appears dynamically while crawling) -->
+      {#if status?.is_crawling}
+        <div class="max-w-xl mx-auto mb-5 p-3 rounded-2xl bg-amber-500/10 border border-amber-500/30 flex items-center justify-between gap-3 text-xs font-mono shadow-lg shadow-amber-500/5 animate-pulse">
+          <div class="flex items-center gap-2 text-amber-300 min-w-0">
+            <span class="relative flex h-2 w-2 flex-shrink-0">
+              <span class="animate-ping absolute inline-flex h-full w-full rounded-full bg-amber-400 opacity-75"></span>
+              <span class="relative inline-flex rounded-full h-2 w-2 bg-amber-500"></span>
+            </span>
+            <span class="font-bold flex-shrink-0">Indexing:</span>
+            <span class="truncate text-zinc-200">{status?.current_folder || status?.current_source || 'Dhaka-Flix Portal'}</span>
+          </div>
+          <div class="flex items-center gap-2 text-zinc-400 flex-shrink-0">
+            <span class="text-zinc-300 font-bold">{status?.files_indexed_session || 0} files</span>
+            <span>•</span>
+            <span class="text-amber-400 font-bold">{Math.round(status?.items_per_second || 0)} files/s</span>
+          </div>
+        </div>
+      {/if}
 
       <!-- Instant Search Bar with 100ms Debounce & Spotlight -->
       <SearchBar

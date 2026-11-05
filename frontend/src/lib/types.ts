@@ -110,6 +110,9 @@ export interface SystemStatus {
   db_size_human?: string;
   thumbs_size_bytes?: number;
   thumbs_size_human?: string;
+  total_volume_bytes?: number;
+  total_volume_human?: string;
+  isp_latency_ms?: number;
   crawler_status?: string;
   telegram_error?: string;
 }

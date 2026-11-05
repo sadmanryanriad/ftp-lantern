@@ -128,13 +128,23 @@ func (n *Notifier) DispatchFollowedEvents() {
 	}
 	n.mu.Unlock()
 
-	rows, err := n.database.Query(`
+	notifyMode := n.database.GetSetting("telegram_notify_mode", "following_only")
+	if notifyMode == "muted" {
+		return
+	}
+
+	query := `
 		SELECT e.id, e.kind, e.title_id, t.name, t.year, t.thumb_hash, e.payload_json
 		FROM events e
 		JOIN titles t ON t.id = e.title_id
-		WHERE e.instant_sent_at IS NULL AND e.failed_at IS NULL AND t.is_following = 1
-		ORDER BY e.created_at ASC
-	`)
+		WHERE e.instant_sent_at IS NULL AND e.failed_at IS NULL
+	`
+	if notifyMode == "following_only" {
+		query += " AND t.is_following = 1"
+	}
+	query += " ORDER BY e.created_at ASC"
+
+	rows, err := n.database.Query(query)
 	if err != nil {
 		return
 	}

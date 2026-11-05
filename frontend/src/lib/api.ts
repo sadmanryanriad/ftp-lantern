@@ -155,6 +155,49 @@ export async function triggerDbBackup(): Promise<{ ok: boolean; backup_path: str
   return res.json();
 }
 
+export async function importDbBackup(file: File): Promise<{ ok: boolean; message: string; titles_count: number }> {
+  const formData = new FormData();
+  formData.append('database', file);
+  const res = await fetch(`${API_BASE}/api/backup/import`, {
+    method: 'POST',
+    body: formData,
+  });
+  if (!res.ok) {
+    const txt = await res.text();
+    throw new Error(txt || `Import HTTP ${res.status}`);
+  }
+  return res.json();
+}
+
+export async function getNotificationMode(): Promise<string> {
+  try {
+    const res = await fetch(`${API_BASE}/api/settings/notifications`);
+    if (!res.ok) return 'following_only';
+    const data = await res.json();
+    return data.mode || 'following_only';
+  } catch {
+    return 'following_only';
+  }
+}
+
+export async function setNotificationMode(mode: string): Promise<void> {
+  const res = await fetch(`${API_BASE}/api/settings/notifications`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ mode }),
+  });
+  if (!res.ok) throw new Error(`Set notification mode HTTP ${res.status}`);
+}
+
+export function playOnMPV(streamUrl: string, fileId?: number): void {
+  if (fileId) recordPlay(fileId);
+  window.location.href = `mpv://${streamUrl}`;
+}
+
+export function getMPVCommand(streamUrl: string): string {
+  return `mpv "${streamUrl}"`;
+}
+
 export function getThumbUrl(title: { id: number; thumb_hash?: string; poster_url?: string }): string {
   if (title.thumb_hash) {
     return `${API_BASE}/api/thumbs/${title.id}-${title.thumb_hash}.jpg`;
