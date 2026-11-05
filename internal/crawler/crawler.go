@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"log"
+	"net"
 	"net/http"
 	"net/url"
 	"path"
@@ -50,6 +51,7 @@ type Crawler struct {
 	statsLock             sync.RWMutex
 	currentSource         string
 	currentFolder         string
+	deadHosts             map[string]bool
 	filesIndexedSession   atomic.Int64
 	foldersIndexedSession atomic.Int64
 	crawlStartTime        time.Time
@@ -57,16 +59,46 @@ type Crawler struct {
 }
 
 func New(database *db.DB, thumbsMgr *thumbs.Manager) *Crawler {
+	tr := &http.Transport{
+		DialContext: (&net.Dialer{
+			Timeout:   3 * time.Second,
+			KeepAlive: 30 * time.Second,
+		}).DialContext,
+		MaxIdleConns:          100,
+		MaxIdleConnsPerHost:   20,
+		IdleConnTimeout:       90 * time.Second,
+		TLSHandshakeTimeout:   5 * time.Second,
+		ResponseHeaderTimeout: 6 * time.Second,
+	}
 	return &Crawler{
 		database:  database,
 		thumbsMgr: thumbsMgr,
-		client:    &http.Client{Timeout: 15 * time.Second},
+		client:    &http.Client{Transport: tr, Timeout: 8 * time.Second},
+		deadHosts: make(map[string]bool),
 	}
 }
 
 func (c *Crawler) FetchDir(targetURL string) ([]DirItem, error) {
+	u, err := url.Parse(targetURL)
+	if err == nil && u.Host != "" {
+		c.statsLock.RLock()
+		isDead := c.deadHosts[u.Host]
+		c.statsLock.RUnlock()
+		if isDead {
+			return nil, fmt.Errorf("host %s marked offline for current crawl session", u.Host)
+		}
+	}
+
 	resp, err := c.client.Get(targetURL)
 	if err != nil {
+		if u != nil && u.Host != "" {
+			c.statsLock.Lock()
+			if c.deadHosts == nil {
+				c.deadHosts = make(map[string]bool)
+			}
+			c.deadHosts[u.Host] = true
+			c.statsLock.Unlock()
+		}
 		return nil, err
 	}
 	defer resp.Body.Close()
@@ -166,6 +198,7 @@ func (c *Crawler) Crawl(sourceURLs []string) error {
 	c.isSeed = (totalTitles == 0)
 
 	c.statsLock.Lock()
+	c.deadHosts = make(map[string]bool)
 	c.crawlStartTime = startTime
 	c.statsLock.Unlock()
 	c.filesIndexedSession.Store(0)
@@ -281,6 +314,29 @@ func (c *Crawler) crawlSource(sourceURL string) error {
 		if !cat.IsDir {
 			continue
 		}
+
+		// 1. Fast check if cat is ALREADY an indexed release!
+		var releaseID int64
+		var recordedMtime string
+		err := c.database.QueryRow("SELECT id, last_modified FROM releases WHERE folder_url = ?", cat.URL).Scan(&releaseID, &recordedMtime)
+		if err == nil {
+			// This item is already an indexed title release!
+			normHTML := normalizeMtime(cat.LastModified)
+			normDB := normalizeMtime(recordedMtime)
+			if normHTML != "" && normHTML == normDB {
+				// Mtime unchanged, skip!
+				c.foldersIndexedSession.Add(1)
+				continue
+			}
+			if normHTML == "" && recordedMtime != "" {
+				c.foldersIndexedSession.Add(1)
+				continue
+			}
+			c.crawlTitleFolder(sourceServer, canonicalCategory, cat, releaseID)
+			continue
+		}
+
+		// 2. Otherwise process as category or new title folder
 		c.crawlCategory(sourceServer, canonicalCategory, cat.Name, cat.URL)
 	}
 
@@ -301,14 +357,41 @@ func (c *Crawler) crawlCategory(sourceServer, canonicalCategory, folderName, cat
 	c.currentSource = canonicalCategory
 	c.statsLock.Unlock()
 
-	titles, err := c.FetchDir(categoryURL)
+	entries, err := c.FetchDir(categoryURL)
 	if err != nil {
 		log.Printf("[Crawler] Failed to fetch category %s (%s): %v", canonicalCategory, categoryURL, err)
 		return
 	}
 	c.foldersIndexedSession.Add(1)
 
-	for _, it := range titles {
+	// Check if categoryURL is actually a direct TITLE FOLDER!
+	hasDirectFiles := false
+	hasSeasonDirs := false
+	for _, it := range entries {
+		if !it.IsDir {
+			ext := strings.ToLower(path.Ext(it.Name))
+			if ext == ".mkv" || ext == ".mp4" || ext == ".avi" || ext == ".webm" {
+				hasDirectFiles = true
+				break
+			}
+		} else if strings.HasPrefix(strings.ToLower(it.Name), "season") || strings.HasPrefix(strings.ToLower(it.Name), "series") {
+			hasSeasonDirs = true
+		}
+	}
+
+	if hasDirectFiles || hasSeasonDirs {
+		// categoryURL IS ITSELF A TITLE FOLDER!
+		var releaseID int64
+		_ = c.database.QueryRow("SELECT id FROM releases WHERE folder_url = ?", categoryURL).Scan(&releaseID)
+		c.crawlTitleFolderContents(sourceServer, canonicalCategory, DirItem{
+			Name:         folderName,
+			URL:          categoryURL,
+			IsDir:        true,
+		}, entries, releaseID)
+		return
+	}
+
+	for _, it := range entries {
 		if !it.IsDir {
 			continue
 		}
@@ -353,6 +436,11 @@ func (c *Crawler) crawlTitleFolder(sourceServer, categoryName string, it DirItem
 		return
 	}
 
+	c.crawlTitleFolderContents(sourceServer, categoryName, it, contents, existingReleaseID)
+}
+
+func (c *Crawler) crawlTitleFolderContents(sourceServer, categoryName string, it DirItem, contents []DirItem, existingReleaseID int64) {
+
 	meta := parser.ParseFolderMetadata(it.Name)
 	if IsSeriesCategory(categoryName) {
 		meta.Type = "series"
@@ -381,7 +469,7 @@ func (c *Crawler) crawlTitleFolder(sourceServer, categoryName string, it DirItem
 
 	// Upsert Title
 	var titleID int64
-	err = c.database.QueryRow("SELECT id FROM titles WHERE name_norm = ? AND year = ?", meta.TitleNorm, meta.Year).Scan(&titleID)
+	err := c.database.QueryRow("SELECT id FROM titles WHERE name_norm = ? AND year = ?", meta.TitleNorm, meta.Year).Scan(&titleID)
 	if err != nil {
 		// Insert Title
 		thumbHash := ""
@@ -542,6 +630,16 @@ func (c *Crawler) crawlHotSet() {
 	_ = rows.Close()
 
 	for _, it := range items {
+		u, err := url.Parse(it.folderURL)
+		if err == nil && u.Host != "" {
+			c.statsLock.RLock()
+			isDead := c.deadHosts[u.Host]
+			c.statsLock.RUnlock()
+			if isDead {
+				continue
+			}
+		}
+
 		c.statsLock.Lock()
 		c.currentFolder = it.folderName
 		c.statsLock.Unlock()
