@@ -1,7 +1,7 @@
 <script lang="ts">
   import { X, AlertTriangle, Monitor, Smartphone, Download, ExternalLink } from '@lucide/svelte';
   import type { MediaFile } from '../types';
-  import { downloadM3U, playOnAndroid, formatBytes } from '../api';
+  import { downloadM3U, playOnAndroid, getAndroidIntentUrl, formatBytes } from '../api';
 
   let {
     file = null,
@@ -104,20 +104,20 @@
           <button
             type="button"
             onclick={handleWindowsPlay}
-            class="inline-flex items-center gap-2 px-3 py-1.5 rounded-xl bg-zinc-800 hover:bg-zinc-700 text-zinc-200 text-xs font-medium border border-zinc-700 transition-colors"
+            class="hidden sm:inline-flex items-center gap-2 px-3 py-1.5 rounded-xl bg-zinc-800 hover:bg-zinc-700 text-zinc-200 text-xs font-medium border border-zinc-700 transition-colors"
           >
             <Monitor class="w-3.5 h-3.5 text-zinc-400" />
             <span>Launch VLC (Windows)</span>
           </button>
 
-          <button
-            type="button"
+          <a
+            href={file.intent_url || getAndroidIntentUrl(file.file_url, file.episode_code ? `${titleName} ${file.episode_code}` : file.name)}
             onclick={handleAndroidPlay}
-            class="inline-flex items-center gap-2 px-3 py-1.5 rounded-xl bg-zinc-800 hover:bg-zinc-700 text-zinc-200 text-xs font-medium border border-zinc-700 transition-colors"
+            class="inline-flex items-center gap-2 px-3.5 py-2 rounded-xl bg-gradient-to-r from-amber-500 to-orange-500 text-zinc-950 text-xs font-bold shadow-md shadow-amber-500/10 active:scale-95 transition-all"
           >
-            <Smartphone class="w-3.5 h-3.5 text-zinc-400" />
-            <span>Launch VLC / MX (Android)</span>
-          </button>
+            <Smartphone class="w-3.5 h-3.5 text-zinc-950" />
+            <span>Open in Player (VLC / MX / MPV)</span>
+          </a>
         </div>
       </div>
 

@@ -20,6 +20,7 @@
     formatBytes,
     downloadM3U,
     playOnAndroid,
+    getAndroidIntentUrl,
     playOnMPV,
     getMPVCommand,
     copyToClipboard,
@@ -222,7 +223,7 @@
               {#if title.resolution}
                 <ResolutionBadge resolution={title.resolution} size="sm" />
               {/if}
-              {#if title.category}
+              {#if title.category && title.category !== `(${title.year})` && title.category !== String(title.year)}
                 <span class="px-2 py-0.5 rounded text-[11px] font-mono bg-zinc-800 text-zinc-300 border border-zinc-700">
                   {title.category}
                 </span>
@@ -333,8 +334,47 @@
                 </div>
               </div>
 
-              <!-- Stream actions buttons: MPV (Primary), VLC, PotPlayer, Android, Preview, Copy -->
-              <div class="flex items-center gap-1.5 sm:gap-2 flex-wrap flex-shrink-0">
+              <!-- MOBILE ACTION BAR: Shown only on smartphones (sm:hidden). Big touch targets, no Windows clutter -->
+              <div class="flex items-center gap-2 w-full mt-2 sm:hidden">
+                <!-- 1-Click Android Player Launch (Opens native Android 'Open with' chooser: VLC, MX Player, MPV, etc.) -->
+                <a
+                  href={ep.intent_url || getAndroidIntentUrl(ep.file_url, ep.name)}
+                  onclick={() => recordPlay(ep.id)}
+                  class="flex-1 min-h-[42px] inline-flex items-center justify-center gap-2 px-3.5 py-2 rounded-xl bg-gradient-to-r from-amber-500 to-orange-500 hover:from-amber-600 hover:to-orange-600 text-zinc-950 font-black text-xs shadow-md shadow-amber-500/15 active:scale-95 transition-all text-center"
+                >
+                  <Play class="w-4 h-4 fill-current flex-shrink-0" />
+                  <span class="truncate">Open in Player (VLC / MX / MPV)</span>
+                </a>
+
+                <!-- In-Browser Video Preview -->
+                <button
+                  type="button"
+                  onclick={() => onPreview(ep)}
+                  class="min-h-[42px] min-w-[42px] flex items-center justify-center rounded-xl bg-zinc-800 hover:bg-zinc-700 text-zinc-200 border border-zinc-700 active:scale-95 transition-all"
+                  title="Preview in Browser"
+                  aria-label="Preview in Browser"
+                >
+                  <Eye class="w-4 h-4" />
+                </button>
+
+                <!-- Copy Link Button -->
+                <button
+                  type="button"
+                  onclick={() => copyStreamLink(ep)}
+                  class="min-h-[42px] min-w-[42px] flex items-center justify-center rounded-xl border active:scale-95 transition-all {copiedFileId === ep.id ? 'text-emerald-400 border-emerald-500/40 bg-emerald-500/10' : 'bg-zinc-800 hover:bg-zinc-700 text-zinc-400 border-zinc-700'}"
+                  title="Copy Stream URL"
+                  aria-label="Copy Stream URL"
+                >
+                  {#if copiedFileId === ep.id}
+                    <Check class="w-4 h-4 text-emerald-400" />
+                  {:else}
+                    <Copy class="w-4 h-4" />
+                  {/if}
+                </button>
+              </div>
+
+              <!-- DESKTOP ACTION BAR: Shown on PC / larger screens (hidden sm:flex). Complete desktop player suite -->
+              <div class="hidden sm:flex items-center gap-1.5 sm:gap-2 flex-wrap flex-shrink-0">
                 <!-- 1-Click MPV Launch (Primary) -->
                 <button
                   type="button"
@@ -366,21 +406,10 @@
                 <button
                   type="button"
                   onclick={() => playOnPotPlayer(ep.file_url, ep.id)}
-                  class="hidden sm:inline-flex items-center gap-1.5 px-2 py-1.5 rounded-lg bg-zinc-850 hover:bg-zinc-800 text-zinc-300 text-xs font-medium border border-zinc-800 transition-colors"
+                  class="inline-flex items-center gap-1.5 px-2 py-1.5 rounded-lg bg-zinc-850 hover:bg-zinc-800 text-zinc-300 text-xs font-medium border border-zinc-800 transition-colors"
                   title="Direct 1-Click Launch in Daum PotPlayer"
                 >
                   <span>PotPlayer</span>
-                </button>
-
-                <!-- Android Intent -->
-                <button
-                  type="button"
-                  onclick={() => handleAndroidPlay(ep)}
-                  class="inline-flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg bg-zinc-800 hover:bg-zinc-700 text-zinc-200 text-xs font-medium border border-zinc-700 transition-colors"
-                  title="Stream on Android (VLC, MX Player)"
-                >
-                  <Smartphone class="w-3.5 h-3.5 text-zinc-400" />
-                  <span class="hidden sm:inline">Android</span>
                 </button>
 
                 <!-- In-Browser Video Preview -->
@@ -391,7 +420,7 @@
                   title="Preview in Browser player"
                 >
                   <Eye class="w-3.5 h-3.5 text-zinc-400" />
-                  <span class="hidden sm:inline">Preview</span>
+                  <span>Preview</span>
                 </button>
 
                 <!-- Copy Link Button -->

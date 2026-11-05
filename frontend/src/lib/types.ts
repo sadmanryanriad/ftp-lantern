@@ -50,6 +50,7 @@ export interface MediaFile {
   episode_code?: string;
   name: string;
   file_url: string;
+  intent_url?: string;
   file_size_bytes?: number;
   size_bytes?: number;
   size_human?: string;

@@ -278,14 +278,36 @@ export function formatBytes(bytes: number, decimals = 2): string {
   return `${parseFloat((bytes / Math.pow(k, i)).toFixed(dm))} ${sizes[i]}`;
 }
 
-export function getAndroidIntentUrl(streamUrl: string, titleName: string): string {
-  // VLC / MX Player Android intent scheme
-  const cleanTitle = encodeURIComponent(titleName);
-  return `intent:${streamUrl}#Intent;type=video/*;title=${cleanTitle};package=org.videolan.vlc;S.browser_fallback_url=${encodeURIComponent(streamUrl)};end;`;
+export function getAndroidIntentUrl(streamUrl: string, titleName?: string): string {
+  try {
+    const cleanUrl = streamUrl.trim();
+    let scheme = 'http';
+    let rawWithoutScheme = cleanUrl;
+
+    if (cleanUrl.startsWith('https://')) {
+      scheme = 'https';
+      rawWithoutScheme = cleanUrl.substring(8);
+    } else if (cleanUrl.startsWith('http://')) {
+      scheme = 'http';
+      rawWithoutScheme = cleanUrl.substring(7);
+    }
+
+    const cleanTitle = titleName ? encodeURIComponent(titleName) : '';
+    // Standard Chrome Android Intent URI syntax:
+    // Triggers Android's native "Open with" system dialog listing all installed players (VLC, MX Player, MPV, Just Player, etc.)
+    let intent = `intent://${rawWithoutScheme}#Intent;action=android.intent.action.VIEW;scheme=${scheme};type=video/*;`;
+    if (cleanTitle) {
+      intent += `S.title=${cleanTitle};`;
+    }
+    intent += 'end';
+    return intent;
+  } catch {
+    return streamUrl;
+  }
 }
 
-export function playOnAndroid(fileId: number, streamUrl: string, titleName: string): void {
-  recordPlay(fileId);
+export function playOnAndroid(fileId: number, streamUrl: string, titleName?: string): void {
+  if (fileId) recordPlay(fileId);
   const intent = getAndroidIntentUrl(streamUrl, titleName);
   window.location.href = intent;
 }
