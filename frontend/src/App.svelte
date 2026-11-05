@@ -29,8 +29,18 @@
     downloadM3U
   } from './lib/api';
 
-  // Global state
-  let status = $state<SystemStatus | null>(null);
+  function getInitialStatus(): SystemStatus | null {
+    if (typeof localStorage === 'undefined') return null;
+    try {
+      const c = localStorage.getItem('lantern_status_cache');
+      return c ? JSON.parse(c) : null;
+    } catch {
+      return null;
+    }
+  }
+
+  // Global state with localStorage cache to avoid offline/0-metrics flash on refresh
+  let status = $state<SystemStatus | null>(getInitialStatus());
   let scheduler = $state<SchedulerStatus | null>(null);
   let whatsNew = $state<Title[]>([]);
   let continueWatching = $state<ContinueWatchingItem[]>([]);
@@ -90,7 +100,10 @@
   async function loadSystemHealth() {
     try {
       const [s, sch] = await Promise.allSettled([fetchStatus(), fetchScheduler()]);
-      if (s.status === 'fulfilled') status = s.value;
+      if (s.status === 'fulfilled') {
+        status = s.value;
+        try { localStorage.setItem('lantern_status_cache', JSON.stringify(s.value)); } catch {}
+      }
       if (sch.status === 'fulfilled') scheduler = sch.value;
     } catch (err) {
       console.warn('System status check error:', err);
@@ -378,11 +391,21 @@
     // Live responsive polling: 2s when crawling, 6s when idle
     let isCurrentlyCrawling = false;
     let pollTimer: any = null;
+    let crawlTick = 0;
 
     async function pollHealth() {
       await loadSystemHealth();
+      crawlTick++;
       const wasCrawling = isCurrentlyCrawling;
       isCurrentlyCrawling = Boolean(status?.is_crawling);
+
+      // Periodically refresh shelves every 10s while crawler is actively indexing
+      if (isCurrentlyCrawling && crawlTick % 5 === 0) {
+        loadShelves();
+        if (activeTab !== 'home') {
+          loadGrid(false);
+        }
+      }
 
       if (wasCrawling && !isCurrentlyCrawling) {
         loadShelves();
@@ -417,87 +440,132 @@
   <!-- Main Container -->
   <main class="flex-1 max-w-7xl w-full mx-auto px-4 sm:px-6 lg:px-8 py-5">
     
-    <!-- Hero / Search Section (Always Global) -->
-    <div class="py-4 text-center">
-      <h1 class="text-2xl sm:text-3xl font-extrabold tracking-tight text-zinc-100 mb-1.5">
-        Instant BDIX Streaming
-      </h1>
-      <p class="text-xs sm:text-sm text-zinc-400 mb-3 max-w-md mx-auto">
-        Zero-proxy direct playback from local ISP caches in 4K, 1080p and HDR
-      </p>
+    <!-- Hero / Search Section: Full on Home, Compact on Dedicated Tabs -->
+    {#if activeTab === 'home'}
+      <div class="py-4 text-center">
+        <h1 class="text-2xl sm:text-3xl font-extrabold tracking-tight text-zinc-100 mb-1.5">
+          Instant BDIX Streaming
+        </h1>
+        <p class="text-xs sm:text-sm text-zinc-400 mb-3 max-w-md mx-auto">
+          Zero-proxy direct playback from local ISP caches in 4K, 1080p and HDR
+        </p>
 
-      <!-- Library Breakdown Stat Pills -->
-      <div class="flex flex-wrap items-center justify-center gap-2 mb-5">
-        <button
-          type="button"
-          onclick={() => navigateToTab('movies', true)}
-          class="inline-flex items-center gap-1.5 px-3 py-1 rounded-full text-xs font-mono font-medium bg-zinc-900/80 hover:bg-zinc-850 border border-zinc-800 text-zinc-300 transition-colors cursor-pointer"
-        >
-          <span>🎬</span>
-          <span>{status?.movies_count?.toLocaleString() || 0} Movies</span>
-        </button>
+        <!-- Library Breakdown Stat Pills -->
+        <div class="flex flex-wrap items-center justify-center gap-2 mb-5">
+          <button
+            type="button"
+            onclick={() => navigateToTab('movies', true)}
+            class="inline-flex items-center gap-1.5 px-3 py-1 rounded-full text-xs font-mono font-medium bg-zinc-900/80 hover:bg-zinc-850 border border-zinc-800 text-zinc-300 transition-colors cursor-pointer"
+          >
+            <span>🎬</span>
+            <span>{status?.movies_count?.toLocaleString() || 0} Movies</span>
+          </button>
 
-        <button
-          type="button"
-          onclick={() => navigateToTab('series', true)}
-          class="inline-flex items-center gap-1.5 px-3 py-1 rounded-full text-xs font-mono font-medium bg-zinc-900/80 hover:bg-zinc-850 border border-zinc-800 text-zinc-300 transition-colors cursor-pointer"
-        >
-          <span>📺</span>
-          <span>{status?.series_count?.toLocaleString() || 0} Series</span>
-        </button>
+          <button
+            type="button"
+            onclick={() => navigateToTab('series', true)}
+            class="inline-flex items-center gap-1.5 px-3 py-1 rounded-full text-xs font-mono font-medium bg-zinc-900/80 hover:bg-zinc-850 border border-zinc-800 text-zinc-300 transition-colors cursor-pointer"
+          >
+            <span>📺</span>
+            <span>{status?.series_count?.toLocaleString() || 0} Series</span>
+          </button>
 
-        <button
-          type="button"
-          onclick={() => navigateToTab('documentary', true)}
-          class="inline-flex items-center gap-1.5 px-3 py-1 rounded-full text-xs font-mono font-medium bg-zinc-900/80 hover:bg-zinc-850 border border-zinc-800 text-zinc-300 transition-colors cursor-pointer"
-        >
-          <span>📁</span>
-          <span>{status?.others_count?.toLocaleString() || 0} Docs & Others</span>
-        </button>
+          <button
+            type="button"
+            onclick={() => navigateToTab('documentary', true)}
+            class="inline-flex items-center gap-1.5 px-3 py-1 rounded-full text-xs font-mono font-medium bg-zinc-900/80 hover:bg-zinc-850 border border-zinc-800 text-zinc-300 transition-colors cursor-pointer"
+          >
+            <span>📁</span>
+            <span>{status?.others_count?.toLocaleString() || 0} Docs & Others</span>
+          </button>
 
-        <div class="inline-flex items-center gap-1.5 px-3 py-1 rounded-full text-xs font-mono font-medium bg-zinc-900/80 border border-zinc-800 text-amber-300">
-          <span>⚡</span>
-          <span>{status?.files_count?.toLocaleString() || 0} Total Files</span>
+          <div class="inline-flex items-center gap-1.5 px-3 py-1 rounded-full text-xs font-mono font-medium bg-zinc-900/80 border border-zinc-800 text-amber-300">
+            <span>⚡</span>
+            <span>{status?.files_count?.toLocaleString() || 0} Total Files</span>
+          </div>
+
+          <!-- Disk Storage Stat Pill -->
+          <button
+            type="button"
+            onclick={() => openSettings(true)}
+            class="inline-flex items-center gap-1.5 px-3 py-1 rounded-full text-xs font-mono font-medium bg-zinc-900/80 hover:bg-zinc-850 border border-zinc-800 text-emerald-400 transition-colors cursor-pointer"
+            title="Total persistent disk storage used by database & poster thumbnails"
+          >
+            <span>💾</span>
+            <span>{status?.total_volume_human || status?.db_size_human || '0 B'} on Disk</span>
+          </button>
         </div>
 
-        <!-- Disk Storage Stat Pill -->
-        <button
-          type="button"
-          onclick={() => openSettings(true)}
-          class="inline-flex items-center gap-1.5 px-3 py-1 rounded-full text-xs font-mono font-medium bg-zinc-900/80 hover:bg-zinc-850 border border-zinc-800 text-emerald-400 transition-colors cursor-pointer"
-          title="Total persistent disk storage used by database & poster thumbnails"
-        >
-          <span>💾</span>
-          <span>{status?.total_volume_human || status?.db_size_human || '0 B'} on Disk</span>
-        </button>
+        <!-- Live Indexing Progress Banner (Appears dynamically while crawling) -->
+        {#if status?.is_crawling}
+          <div class="max-w-xl mx-auto mb-5 p-3 rounded-2xl bg-amber-500/10 border border-amber-500/30 flex items-center justify-between gap-3 text-xs font-mono shadow-lg shadow-amber-500/5 animate-pulse">
+            <div class="flex items-center gap-2 text-amber-300 min-w-0">
+              <span class="relative flex h-2 w-2 flex-shrink-0">
+                <span class="animate-ping absolute inline-flex h-full w-full rounded-full bg-amber-400 opacity-75"></span>
+                <span class="relative inline-flex rounded-full h-2 w-2 bg-amber-500"></span>
+              </span>
+              <span class="font-bold flex-shrink-0">Indexing:</span>
+              <span class="truncate text-zinc-200">{status?.current_folder || status?.current_source || 'Dhaka-Flix Portal'}</span>
+            </div>
+            <div class="flex items-center gap-2 text-zinc-400 flex-shrink-0">
+              <span class="text-zinc-300 font-bold">{status?.files_indexed_session || 0} files</span>
+              <span>•</span>
+              <span class="text-amber-400 font-bold">{Math.round(status?.items_per_second || 0)} files/s</span>
+            </div>
+          </div>
+        {/if}
+
+        <!-- Instant Search Bar with 100ms Debounce & Spotlight -->
+        <SearchBar
+          onSelectTitle={(t) => openTitleDetail(t, true)}
+          onFullSearch={handleFullSearch}
+          onQuickPlay={(t) => openTitleDetail(t, true)}
+        />
       </div>
-
-      <!-- Live Indexing Progress Banner (Appears dynamically while crawling) -->
-      {#if status?.is_crawling}
-        <div class="max-w-xl mx-auto mb-5 p-3 rounded-2xl bg-amber-500/10 border border-amber-500/30 flex items-center justify-between gap-3 text-xs font-mono shadow-lg shadow-amber-500/5 animate-pulse">
-          <div class="flex items-center gap-2 text-amber-300 min-w-0">
-            <span class="relative flex h-2 w-2 flex-shrink-0">
-              <span class="animate-ping absolute inline-flex h-full w-full rounded-full bg-amber-400 opacity-75"></span>
-              <span class="relative inline-flex rounded-full h-2 w-2 bg-amber-500"></span>
-            </span>
-            <span class="font-bold flex-shrink-0">Indexing:</span>
-            <span class="truncate text-zinc-200">{status?.current_folder || status?.current_source || 'Dhaka-Flix Portal'}</span>
+    {:else}
+      <!-- Compact Top Search on Dedicated Pages -->
+      <div class="pt-2 pb-5 flex flex-col sm:flex-row sm:items-center justify-between gap-4 border-b border-zinc-850/80 mb-5">
+        <div>
+          <div class="flex items-center gap-2 text-xs font-mono text-zinc-400 mb-1">
+            <button
+              type="button"
+              onclick={() => navigateToTab('home', true)}
+              class="hover:text-amber-400 transition-colors cursor-pointer"
+            >
+              Home
+            </button>
+            <span>/</span>
+            <span class="text-amber-400 capitalize">{activeTab === 'documentary' ? 'Docs' : activeTab}</span>
           </div>
-          <div class="flex items-center gap-2 text-zinc-400 flex-shrink-0">
-            <span class="text-zinc-300 font-bold">{status?.files_indexed_session || 0} files</span>
-            <span>•</span>
-            <span class="text-amber-400 font-bold">{Math.round(status?.items_per_second || 0)} files/s</span>
-          </div>
+          <h1 class="text-xl sm:text-2xl font-black text-zinc-100 flex items-center gap-2">
+            {#if activeTab === 'movies'}
+              <span>🎬</span>
+              <span>Movies Library</span>
+            {:else if activeTab === 'series'}
+              <span>📺</span>
+              <span>TV & Web Series</span>
+            {:else if activeTab === 'anime'}
+              <span>⛩️</span>
+              <span>Anime & Cartoons</span>
+            {:else if activeTab === 'documentary'}
+              <span>🌍</span>
+              <span>Documentaries & Specials</span>
+            {:else if activeTab === 'following'}
+              <span>⭐</span>
+              <span>Followed Series</span>
+            {/if}
+          </h1>
         </div>
-      {/if}
 
-      <!-- Instant Search Bar with 100ms Debounce & Spotlight -->
-      <SearchBar
-        onSelectTitle={(t) => openTitleDetail(t, true)}
-        onFullSearch={handleFullSearch}
-        onQuickPlay={(t) => openTitleDetail(t, true)}
-      />
-    </div>
+        <div class="w-full sm:w-80">
+          <SearchBar
+            onSelectTitle={(t) => openTitleDetail(t, true)}
+            onFullSearch={handleFullSearch}
+            onQuickPlay={(t) => openTitleDetail(t, true)}
+          />
+        </div>
+      </div>
+    {/if}
 
     <!-- VIEW 1: ACTIVE SEARCH QUERY (Hides Home blocks and focuses on search results) -->
     {#if searchQuery}
@@ -565,14 +633,6 @@
 
     <!-- VIEW 3: DEDICATED MOVIES PAGE -->
     {:else if activeTab === 'movies'}
-      <div class="mb-2">
-        <h2 class="text-xl font-extrabold text-zinc-100 flex items-center gap-2">
-          <span>🎬</span>
-          <span>All Movies Collection</span>
-        </h2>
-        <p class="text-xs text-zinc-400">Filter by ISP subcategory, release year, date added, or quality</p>
-      </div>
-
       <PosterGrid
         {titles}
         {activeFilter}
@@ -595,14 +655,6 @@
 
     <!-- VIEW 4: DEDICATED TV & WEB SERIES PAGE -->
     {:else if activeTab === 'series'}
-      <div class="mb-2">
-        <h2 class="text-xl font-extrabold text-zinc-100 flex items-center gap-2">
-          <span>📺</span>
-          <span>TV & Web Series</span>
-        </h2>
-        <p class="text-xs text-zinc-400">Browse TV series, Korean dramas, anime, and shows</p>
-      </div>
-
       <PosterGrid
         {titles}
         {activeFilter}
@@ -625,14 +677,6 @@
 
     <!-- VIEW 5: ANIME & CARTOONS PAGE -->
     {:else if activeTab === 'anime'}
-      <div class="mb-2">
-        <h2 class="text-xl font-extrabold text-zinc-100 flex items-center gap-2">
-          <span>⛩️</span>
-          <span>Anime & Animated Series</span>
-        </h2>
-        <p class="text-xs text-zinc-400">Animated movies and anime series on BDIX</p>
-      </div>
-
       <PosterGrid
         {titles}
         {activeFilter}
@@ -655,14 +699,6 @@
 
     <!-- VIEW 6: DOCUMENTARIES PAGE -->
     {:else if activeTab === 'documentary'}
-      <div class="mb-2">
-        <h2 class="text-xl font-extrabold text-zinc-100 flex items-center gap-2">
-          <span>🌍</span>
-          <span>Documentaries</span>
-        </h2>
-        <p class="text-xs text-zinc-400">Documentary films and docu-series from BDIX servers</p>
-      </div>
-
       <PosterGrid
         {titles}
         {activeFilter}

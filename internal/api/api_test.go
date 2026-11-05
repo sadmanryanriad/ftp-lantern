@@ -167,3 +167,60 @@ func TestSeasonPlaylistFilter(t *testing.T) {
 		t.Errorf("expected playlist to contain S02E01")
 	}
 }
+
+func TestSearchMoviesAndSeries(t *testing.T) {
+	_, mux, database := setupTestServer(t)
+	defer database.Close()
+
+	// Seed Movie
+	resM, err := database.Exec(`INSERT INTO titles (name, name_norm, year, type) VALUES ('Inception', 'inception', 2010, 'movie')`)
+	if err != nil {
+		t.Fatal(err)
+	}
+	mID, _ := resM.LastInsertId()
+	_, _ = database.Exec(`INSERT INTO releases (title_id, category, folder_url, folder_name, resolution) VALUES (?, 'English Movies', 'http://test/inc/', 'Inception (2010)', '1080p')`, mID)
+
+	// Seed Series
+	resS, err := database.Exec(`INSERT INTO titles (name, name_norm, year, type) VALUES ('Dark', 'dark', 2017, 'series')`)
+	if err != nil {
+		t.Fatal(err)
+	}
+	sID, _ := resS.LastInsertId()
+	_, _ = database.Exec(`INSERT INTO releases (title_id, category, folder_url, folder_name, resolution) VALUES (?, 'TV-WEB-Series', 'http://test/dark/', 'Dark (2017)', '1080p')`, sID)
+
+	// Query movies
+	reqM := httptest.NewRequest("GET", "/api/search?type=movie&limit=16&sort=recent", nil)
+	recM := httptest.NewRecorder()
+	mux.ServeHTTP(recM, reqM)
+
+	if recM.Code != http.StatusOK {
+		t.Fatalf("expected 200 OK, got %d", recM.Code)
+	}
+
+	var dataM map[string]interface{}
+	if err := json.NewDecoder(recM.Body).Decode(&dataM); err != nil {
+		t.Fatalf("failed to decode: %v", err)
+	}
+	resultsM, ok := dataM["results"].([]interface{})
+	if !ok || len(resultsM) == 0 {
+		t.Fatalf("expected at least 1 movie, got: %+v", dataM)
+	}
+
+	// Query series
+	reqS := httptest.NewRequest("GET", "/api/search?type=series&limit=16&sort=recent", nil)
+	recS := httptest.NewRecorder()
+	mux.ServeHTTP(recS, reqS)
+
+	if recS.Code != http.StatusOK {
+		t.Fatalf("expected 200 OK, got %d", recS.Code)
+	}
+
+	var dataS map[string]interface{}
+	if err := json.NewDecoder(recS.Body).Decode(&dataS); err != nil {
+		t.Fatalf("failed to decode: %v", err)
+	}
+	resultsS, ok := dataS["results"].([]interface{})
+	if !ok || len(resultsS) == 0 {
+		t.Fatalf("expected at least 1 series, got: %+v", dataS)
+	}
+}

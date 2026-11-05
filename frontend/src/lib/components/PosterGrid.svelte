@@ -317,10 +317,23 @@
         </button>
       </div>
     {/if}
-  {:else if !loading}
+  {:else if loading}
+    <!-- Loading Skeleton Grid -->
+    <div class="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5 xl:grid-cols-6 gap-3 sm:gap-5 animate-pulse">
+      {#each Array(12) as _}
+        <div class="rounded-xl overflow-hidden bg-zinc-900/60 border border-zinc-850 flex flex-col">
+          <div class="w-full aspect-[2/3] bg-zinc-900/80"></div>
+          <div class="p-3 space-y-2">
+            <div class="h-3.5 bg-zinc-800 rounded w-3/4"></div>
+            <div class="h-2.5 bg-zinc-850 rounded w-1/2"></div>
+          </div>
+        </div>
+      {/each}
+    </div>
+  {:else}
     <div class="rounded-2xl border border-zinc-900 bg-zinc-950/40 p-12 text-center">
       <p class="text-zinc-400 text-sm font-mono mb-2">No matching releases found</p>
-      <p class="text-zinc-400 text-xs">Try selecting a different category, year, or clearing filters.</p>
+      <p class="text-zinc-500 text-xs">Try selecting a different category, year, or clearing filters.</p>
     </div>
   {/if}
 </section>

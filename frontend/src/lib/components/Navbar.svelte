@@ -16,7 +16,7 @@
     onOpenSettings: () => void;
   } = $props();
 
-  const isConnected = $derived(status?.bdix_connected ?? false);
+  const isConnected = $derived(status ? Boolean(status.bdix_connected) : true);
   const isTurbo = $derived(scheduler?.turbo_mode ?? false);
   const isCrawling = $derived(status?.is_crawling ?? false);
   const crawlSpeed = $derived(Math.round(status?.items_per_second || 0));
@@ -97,13 +97,17 @@
 
       <!-- BDIX Health Badge -->
       <div
-        class="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-xs font-medium border transition-colors {isConnected
+        class="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-xs font-medium border transition-colors {status === null
+          ? 'bg-zinc-900/80 text-zinc-400 border-zinc-800'
+          : isConnected
           ? 'bg-emerald-950/50 text-emerald-300 border-emerald-500/30'
           : 'bg-rose-950/50 text-rose-300 border-rose-500/30'}"
         title="ISP Media Server Reachability"
       >
         <span class="relative flex h-2 w-2">
-          {#if isConnected}
+          {#if status === null}
+            <span class="relative inline-flex rounded-full h-2 w-2 bg-zinc-500"></span>
+          {:else if isConnected}
             <span class="animate-ping absolute inline-flex h-full w-full rounded-full bg-emerald-400 opacity-75"></span>
             <span class="relative inline-flex rounded-full h-2 w-2 bg-emerald-500"></span>
           {:else}
@@ -111,7 +115,13 @@
           {/if}
         </span>
         <span class="hidden lg:inline font-mono text-[11px]">
-          {isConnected ? 'BDIX 10Gbps' : 'Offline'}
+          {#if status === null}
+            Checking...
+          {:else if isConnected}
+            {status?.isp_latency_ms ? `BDIX ${status.isp_latency_ms}ms` : 'BDIX 10Gbps'}
+          {:else}
+            Offline
+          {/if}
         </span>
       </div>
 

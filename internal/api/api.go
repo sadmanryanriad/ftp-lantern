@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"net/url"
 	"os"
 	"path/filepath"
 	"runtime"
@@ -46,20 +47,28 @@ func NewServer(cfg *config.Config, database *db.DB, c *crawler.Crawler, tm *thum
 }
 
 func (s *Server) startIspHealthChecker() {
-	client := &http.Client{Timeout: 3 * time.Second}
+	client := &http.Client{Timeout: 5 * time.Second}
+	consecutiveFailures := 0
 	for {
 		if len(s.cfg.SourceURLs) > 0 {
+			probeURL := s.cfg.SourceURLs[0]
+			if u, err := url.Parse(probeURL); err == nil && u.Scheme != "" && u.Host != "" {
+				probeURL = fmt.Sprintf("%s://%s/", u.Scheme, u.Host)
+			}
 			start := time.Now()
-			req, err := http.NewRequest("GET", s.cfg.SourceURLs[0], nil)
+			req, err := http.NewRequest("HEAD", probeURL, nil)
 			if err == nil {
-				req.Header.Set("Range", "bytes=0-0")
 				resp, err := client.Do(req)
 				if err == nil {
 					_ = resp.Body.Close()
+					consecutiveFailures = 0
 					s.ispConnected.Store(resp.StatusCode < 500)
 					s.ispLatencyMs.Store(time.Since(start).Milliseconds())
 				} else {
-					s.ispConnected.Store(false)
+					consecutiveFailures++
+					if consecutiveFailures >= 2 {
+						s.ispConnected.Store(false)
+					}
 				}
 			}
 		}
