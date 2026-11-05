@@ -2,14 +2,25 @@ import type { Title, TitleDetail, SystemStatus, SchedulerStatus, SearchResponse,
 
 export const API_BASE = '';
 
+export async function fetchWithTimeout(url: string, opts: RequestInit = {}, timeoutMs = 5000): Promise<Response> {
+  const controller = new AbortController();
+  const id = setTimeout(() => controller.abort(), timeoutMs);
+  try {
+    const res = await fetch(url, { ...opts, signal: controller.signal });
+    return res;
+  } finally {
+    clearTimeout(id);
+  }
+}
+
 export async function fetchStatus(): Promise<SystemStatus> {
-  const res = await fetch(`${API_BASE}/api/status`);
+  const res = await fetchWithTimeout(`${API_BASE}/api/status`, {}, 4000);
   if (!res.ok) throw new Error(`Status HTTP ${res.status}`);
   return res.json();
 }
 
 export async function fetchScheduler(): Promise<SchedulerStatus> {
-  const res = await fetch(`${API_BASE}/api/scheduler`);
+  const res = await fetchWithTimeout(`${API_BASE}/api/scheduler`, {}, 4000);
   if (!res.ok) throw new Error(`Scheduler HTTP ${res.status}`);
   return res.json();
 }
@@ -48,7 +59,7 @@ export async function searchTitles(params: {
   if (params.limit) query.set('limit', params.limit.toString());
   if (params.sort) query.set('sort', params.sort);
 
-  const res = await fetch(`${API_BASE}/api/search?${query.toString()}`);
+  const res = await fetchWithTimeout(`${API_BASE}/api/search?${query.toString()}`, {}, 6000);
   if (!res.ok) throw new Error(`Search HTTP ${res.status}`);
   const data = await res.json();
   // Handle both array response or { results: [...], total: ... }
@@ -59,7 +70,7 @@ export async function searchTitles(params: {
 }
 
 export async function fetchTitleDetail(id: number): Promise<TitleDetail> {
-  const res = await fetch(`${API_BASE}/api/titles/${id}`);
+  const res = await fetchWithTimeout(`${API_BASE}/api/titles/${id}`, {}, 5000);
   if (!res.ok) throw new Error(`Title HTTP ${res.status}`);
   return res.json();
 }
@@ -98,7 +109,7 @@ export async function markWatchedUpTo(fileId: number): Promise<void> {
 }
 
 export async function fetchWhatsNew(limit = 20): Promise<Title[]> {
-  const res = await fetch(`${API_BASE}/api/new?limit=${limit}`);
+  const res = await fetchWithTimeout(`${API_BASE}/api/new?limit=${limit}`, {}, 5000);
   if (!res.ok) throw new Error(`WhatsNew HTTP ${res.status}`);
   const data = await res.json();
   return Array.isArray(data) ? data : data.results || [];
@@ -106,7 +117,7 @@ export async function fetchWhatsNew(limit = 20): Promise<Title[]> {
 
 export async function fetchContinueWatching(): Promise<ContinueWatchingItem[]> {
   try {
-    const res = await fetch(`${API_BASE}/api/titles?continue_watching=true`);
+    const res = await fetchWithTimeout(`${API_BASE}/api/titles?continue_watching=true`, {}, 4000);
     if (!res.ok) {
       // Fallback: check search or plays endpoint
       return [];

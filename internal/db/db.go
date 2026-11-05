@@ -22,14 +22,16 @@ func Open(dbPath string) (*DB, error) {
 		return nil, fmt.Errorf("failed to create db directory: %w", err)
 	}
 
-	dsn := fmt.Sprintf("%s?_pragma=journal_mode(WAL)&_pragma=synchronous(NORMAL)&_pragma=foreign_keys(ON)", dbPath)
+	dsn := fmt.Sprintf("%s?_pragma=journal_mode(WAL)&_pragma=synchronous(NORMAL)&_pragma=busy_timeout(5000)&_pragma=foreign_keys(ON)", dbPath)
 	sqlDB, err := sql.Open("sqlite", dsn)
 	if err != nil {
 		return nil, fmt.Errorf("failed to open sqlite database: %w", err)
 	}
 
-	sqlDB.SetMaxOpenConns(1) // SQLite single writer avoids locks
-	sqlDB.SetMaxIdleConns(1)
+	// WAL mode allows multiple concurrent readers without blocking writers
+	sqlDB.SetMaxOpenConns(6)
+	sqlDB.SetMaxIdleConns(4)
+	sqlDB.SetConnMaxLifetime(10 * time.Minute)
 
 	d := &DB{DB: sqlDB}
 	if err := d.migrate(); err != nil {

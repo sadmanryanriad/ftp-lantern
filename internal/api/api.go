@@ -12,6 +12,7 @@ import (
 	"sort"
 	"strconv"
 	"strings"
+	"sync"
 	"sync/atomic"
 	"time"
 
@@ -23,6 +24,17 @@ import (
 	"github.com/sadmanryanriad/ftp-lantern/internal/thumbs"
 )
 
+type statusMetrics struct {
+	titleCount      int
+	fileCount       int
+	releaseCount    int
+	moviesCount     int
+	seriesCount     int
+	othersCount     int
+	dbSizeBytes     int64
+	thumbsSizeBytes int64
+}
+
 type Server struct {
 	cfg          *config.Config
 	database     *db.DB
@@ -31,6 +43,8 @@ type Server struct {
 	startTime    time.Time
 	ispConnected atomic.Bool
 	ispLatencyMs atomic.Int64
+	metricsMu    sync.RWMutex
+	metrics      statusMetrics
 }
 
 func NewServer(cfg *config.Config, database *db.DB, c *crawler.Crawler, tm *thumbs.Manager) *Server {
@@ -43,7 +57,67 @@ func NewServer(cfg *config.Config, database *db.DB, c *crawler.Crawler, tm *thum
 	}
 	s.ispConnected.Store(true) // Optimistically true on start
 	go s.startIspHealthChecker()
+	go s.startMetricsUpdater()
 	return s
+}
+
+func (s *Server) startMetricsUpdater() {
+	update := func() {
+		tCount, _ := s.database.TitleCount()
+		fCount, _ := s.database.FileCount()
+
+		var relCount int
+		_ = s.database.QueryRow("SELECT COUNT(*) FROM releases WHERE gone_at IS NULL").Scan(&relCount)
+
+		var mCount, sCount, oCount int
+		_ = s.database.QueryRow(`
+			SELECT
+				COALESCE(SUM(CASE WHEN type = 'movie' THEN 1 ELSE 0 END), 0),
+				COALESCE(SUM(CASE WHEN type = 'series' THEN 1 ELSE 0 END), 0),
+				COALESCE(SUM(CASE WHEN type NOT IN ('movie', 'series') THEN 1 ELSE 0 END), 0)
+			FROM titles
+		`).Scan(&mCount, &sCount, &oCount)
+
+		var dbSize int64
+		dbPath := filepath.Join(s.cfg.DataDir, "lantern.db")
+		if fi, err := os.Stat(dbPath); err == nil {
+			dbSize += fi.Size()
+		}
+		if fi, err := os.Stat(dbPath + "-wal"); err == nil {
+			dbSize += fi.Size()
+		}
+		if fi, err := os.Stat(dbPath + "-shm"); err == nil {
+			dbSize += fi.Size()
+		}
+
+		var thumbsSize int64
+		if entries, err := os.ReadDir(s.cfg.ThumbsDir); err == nil {
+			for _, e := range entries {
+				if fi, err := e.Info(); err == nil {
+					thumbsSize += fi.Size()
+				}
+			}
+		}
+
+		s.metricsMu.Lock()
+		s.metrics = statusMetrics{
+			titleCount:      tCount,
+			fileCount:       fCount,
+			releaseCount:    relCount,
+			moviesCount:     mCount,
+			seriesCount:     sCount,
+			othersCount:     oCount,
+			dbSizeBytes:     dbSize,
+			thumbsSizeBytes: thumbsSize,
+		}
+		s.metricsMu.Unlock()
+	}
+
+	update()
+	ticker := time.NewTicker(4 * time.Second)
+	for range ticker.C {
+		update()
+	}
 }
 
 func (s *Server) startIspHealthChecker() {
@@ -979,68 +1053,35 @@ func (s *Server) handleTriggerCrawl(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) handleStatus(w http.ResponseWriter, r *http.Request) {
-	titleCount, _ := s.database.TitleCount()
-	fileCount, _ := s.database.FileCount()
+	s.metricsMu.RLock()
+	m := s.metrics
+	s.metricsMu.RUnlock()
 
-	var releaseCount int
-	_ = s.database.QueryRow("SELECT COUNT(*) FROM releases WHERE gone_at IS NULL").Scan(&releaseCount)
-
-	var moviesCount, seriesCount, othersCount int
-	_ = s.database.QueryRow(`
-		SELECT
-			COALESCE(SUM(CASE WHEN type = 'movie' THEN 1 ELSE 0 END), 0),
-			COALESCE(SUM(CASE WHEN type = 'series' THEN 1 ELSE 0 END), 0),
-			COALESCE(SUM(CASE WHEN type NOT IN ('movie', 'series') THEN 1 ELSE 0 END), 0)
-		FROM titles
-	`).Scan(&moviesCount, &seriesCount, &othersCount)
-
-	// Background ISP gateway reachability
 	ispConnected := s.ispConnected.Load()
 
-	var m runtime.MemStats
-	runtime.ReadMemStats(&m)
+	var mem runtime.MemStats
+	runtime.ReadMemStats(&mem)
 
 	lastCrawl := s.database.GetSetting("last_crawl_time", "")
 	telemetry := s.crawler.GetTelemetry()
 
-	var dbSizeBytes int64
-	dbPath := filepath.Join(s.cfg.DataDir, "lantern.db")
-	if fi, err := os.Stat(dbPath); err == nil {
-		dbSizeBytes += fi.Size()
-	}
-	if fi, err := os.Stat(dbPath + "-wal"); err == nil {
-		dbSizeBytes += fi.Size()
-	}
-	if fi, err := os.Stat(dbPath + "-shm"); err == nil {
-		dbSizeBytes += fi.Size()
-	}
-
-	var thumbsSizeBytes int64
-	if entries, err := os.ReadDir(s.cfg.ThumbsDir); err == nil {
-		for _, e := range entries {
-			if fi, err := e.Info(); err == nil {
-				thumbsSizeBytes += fi.Size()
-			}
-		}
-	}
-
-	totalVolumeBytes := dbSizeBytes + thumbsSizeBytes
+	totalVolumeBytes := m.dbSizeBytes + m.thumbsSizeBytes
 
 	writeJSON(w, map[string]interface{}{
 		"status":                  "ok",
 		"bdix_connected":          ispConnected,
 		"isp_connected":           ispConnected,
 		"isp_latency_ms":          s.ispLatencyMs.Load(),
-		"titles_count":            titleCount,
-		"files_count":             fileCount,
-		"releases_count":          releaseCount,
-		"movies_count":            moviesCount,
-		"series_count":            seriesCount,
-		"others_count":            othersCount,
+		"titles_count":            m.titleCount,
+		"files_count":             m.fileCount,
+		"releases_count":          m.releaseCount,
+		"movies_count":            m.moviesCount,
+		"series_count":            m.seriesCount,
+		"others_count":            m.othersCount,
 		"uptime":                  time.Since(s.startTime).String(),
 		"uptime_seconds":          int64(time.Since(s.startTime).Seconds()),
-		"memory_alloc_mb":         float64(m.Alloc) / (1024 * 1024),
-		"memory_sys_mb":           float64(m.Sys) / (1024 * 1024),
+		"memory_alloc_mb":         float64(mem.Alloc) / (1024 * 1024),
+		"memory_sys_mb":           float64(mem.Sys) / (1024 * 1024),
 		"goroutines_count":        runtime.NumGoroutine(),
 		"last_scan_at":            lastCrawl,
 		"is_crawling":             telemetry.IsCrawling,
@@ -1050,14 +1091,14 @@ func (s *Server) handleStatus(w http.ResponseWriter, r *http.Request) {
 		"folders_indexed_session": telemetry.FoldersIndexedSession,
 		"items_per_second":        telemetry.ItemsPerSecond,
 		"last_scan_duration_sec":  telemetry.LastScanDurationSec,
-		"db_size_bytes":           dbSizeBytes,
-		"db_size_human":           formatBytes(dbSizeBytes),
-		"thumbs_size_bytes":       thumbsSizeBytes,
-		"thumbs_size_human":       formatBytes(thumbsSizeBytes),
+		"db_size_bytes":           m.dbSizeBytes,
+		"db_size_human":           formatBytes(m.dbSizeBytes),
+		"thumbs_size_bytes":       m.thumbsSizeBytes,
+		"thumbs_size_human":       formatBytes(m.thumbsSizeBytes),
 		"total_volume_bytes":      totalVolumeBytes,
 		"total_volume_human":      formatBytes(totalVolumeBytes),
-		"ram_alloc_mb":            fmt.Sprintf("%.2f MB", float64(m.Alloc)/(1024*1024)),
-		"ram_sys_mb":              fmt.Sprintf("%.2f MB", float64(m.Sys)/(1024*1024)),
+		"ram_alloc_mb":            fmt.Sprintf("%.2f MB", float64(mem.Alloc)/(1024*1024)),
+		"ram_sys_mb":              fmt.Sprintf("%.2f MB", float64(mem.Sys)/(1024*1024)),
 	})
 }
 
