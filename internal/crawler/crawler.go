@@ -61,19 +61,19 @@ type Crawler struct {
 func New(database *db.DB, thumbsMgr *thumbs.Manager) *Crawler {
 	tr := &http.Transport{
 		DialContext: (&net.Dialer{
-			Timeout:   3 * time.Second,
+			Timeout:   4 * time.Second,
 			KeepAlive: 30 * time.Second,
 		}).DialContext,
 		MaxIdleConns:          100,
 		MaxIdleConnsPerHost:   20,
 		IdleConnTimeout:       90 * time.Second,
 		TLSHandshakeTimeout:   5 * time.Second,
-		ResponseHeaderTimeout: 6 * time.Second,
+		ResponseHeaderTimeout: 10 * time.Second,
 	}
 	return &Crawler{
 		database:  database,
 		thumbsMgr: thumbsMgr,
-		client:    &http.Client{Transport: tr, Timeout: 8 * time.Second},
+		client:    &http.Client{Transport: tr, Timeout: 15 * time.Second},
 		deadHosts: make(map[string]bool),
 	}
 }
@@ -91,14 +91,6 @@ func (c *Crawler) FetchDir(targetURL string) ([]DirItem, error) {
 
 	resp, err := c.client.Get(targetURL)
 	if err != nil {
-		if u != nil && u.Host != "" {
-			c.statsLock.Lock()
-			if c.deadHosts == nil {
-				c.deadHosts = make(map[string]bool)
-			}
-			c.deadHosts[u.Host] = true
-			c.statsLock.Unlock()
-		}
 		return nil, err
 	}
 	defer resp.Body.Close()
@@ -306,6 +298,15 @@ func (c *Crawler) crawlSource(sourceURL string) error {
 
 	categories, err := c.FetchDir(sourceURL)
 	if err != nil {
+		u, _ := url.Parse(sourceURL)
+		if u != nil && u.Host != "" {
+			c.statsLock.Lock()
+			if c.deadHosts == nil {
+				c.deadHosts = make(map[string]bool)
+			}
+			c.deadHosts[u.Host] = true
+			c.statsLock.Unlock()
+		}
 		return err
 	}
 	c.foldersIndexedSession.Add(1)
