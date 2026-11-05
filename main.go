@@ -168,7 +168,7 @@ func runScheduler(database *db.DB, c *crawler.Crawler, notif *notifier.Notifier,
 
 	var lastDailyCrawlDay int = -1
 	var lastDailyDigestDay int = -1
-	var lastTurboCrawl time.Time
+	var lastTurboCrawl time.Time = time.Now()
 
 	for {
 		select {
@@ -187,8 +187,8 @@ func runScheduler(database *db.DB, c *crawler.Crawler, notif *notifier.Notifier,
 				}
 			}
 
-			// Frequency setting: "15m", "30m", "1h", "daily", "manual"
-			frequency := database.GetSetting("crawl_frequency", "15m")
+			// Frequency setting: "daily" (default), "15m", "30m", "1h", "manual"
+			frequency := database.GetSetting("crawl_frequency", "daily")
 
 			if isTurbo || frequency == "15m" {
 				// Crawl every 15 minutes

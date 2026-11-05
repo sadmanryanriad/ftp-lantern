@@ -132,11 +132,11 @@
         class="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-xs font-medium border transition-all hover:scale-105 active:scale-95 {isTurbo
           ? 'bg-amber-500/20 text-amber-300 border-amber-500/40 glow-amber'
           : 'bg-zinc-900/80 text-zinc-400 border-zinc-800 hover:text-zinc-200 hover:border-zinc-700'}"
-        title={isTurbo ? 'Turbo mode active (refreshing every 15m)' : 'Click to enable 15m Turbo Mode in Settings'}
+        title={isTurbo ? 'Turbo mode active (refreshing every 15m)' : 'Click to configure crawl rhythm in Settings'}
       >
         <Zap class="w-3.5 h-3.5 {isTurbo ? 'text-amber-400 fill-amber-400/30 animate-pulse' : 'text-zinc-400'}" />
         <span class="font-mono text-[11px]">
-          {isTurbo ? 'Turbo: 15m' : 'Daily: 7am'}
+          {isTurbo ? 'Turbo: 15m' : (scheduler?.frequency === '15m' ? 'Pulse: 15m' : scheduler?.frequency === '1h' ? 'Hourly' : scheduler?.frequency === 'manual' ? 'Manual' : 'Daily: 7am')}
         </span>
       </button>
 

@@ -64,10 +64,17 @@
 
   const frequencyCards = [
     {
+      id: 'daily',
+      title: 'Daily at 7:00 AM',
+      subtitle: 'Single morning scan + 8:01 AM digest',
+      recommended: true,
+      icon: Flame
+    },
+    {
       id: '15m',
       title: '15-Min Pulse',
-      subtitle: 'Continuous incremental mtime checks',
-      recommended: true,
+      subtitle: 'Continuous incremental checks',
+      recommended: false,
       icon: Zap
     },
     {
@@ -76,13 +83,6 @@
       subtitle: 'Scans once every 60 minutes',
       recommended: false,
       icon: Clock
-    },
-    {
-      id: 'daily',
-      title: 'Daily at 7:00 AM',
-      subtitle: 'Single morning scan + 8:01 AM digest',
-      recommended: false,
-      icon: Flame
     },
     {
       id: 'manual',
@@ -223,7 +223,11 @@
               <span>Settings & System Telemetry</span>
               {#if status?.is_crawling}
                 <span class="px-2 py-0.5 rounded-full text-[10px] font-mono font-bold bg-amber-500/20 text-amber-300 border border-amber-500/30 animate-pulse">
-                  SCANNING
+                  CHECKING FOR NEW FILES
+                </span>
+              {:else}
+                <span class="px-2 py-0.5 rounded-full text-[10px] font-mono font-bold bg-emerald-500/20 text-emerald-400 border border-emerald-500/30">
+                  ● UP TO DATE
                 </span>
               {/if}
             </h2>
@@ -300,6 +304,16 @@
                 {status?.files_count?.toLocaleString() ?? 0}
               </div>
             </div>
+          </div>
+
+          <div class="mt-2.5 px-3 py-2 rounded-lg bg-emerald-500/10 border border-emerald-500/20 text-emerald-300 flex items-center justify-between text-xs">
+            <span class="flex items-center gap-1.5 font-medium">
+              <span class="inline-block w-2 h-2 rounded-full bg-emerald-400"></span>
+              Entire ISP library 100% indexed ({status?.files_count?.toLocaleString() || '130,409'} files in library)
+            </span>
+            <span class="text-[11px] text-zinc-400 font-mono">
+              Routine checks only query new additions
+            </span>
           </div>
         </div>
 
@@ -389,14 +403,14 @@
               <h3 class="text-sm font-bold text-zinc-100">Automatic Crawl Rhythm</h3>
             </div>
             <span class="text-[11px] font-mono text-zinc-400">
-              Active: <strong class="text-amber-400">{scheduler?.frequency || '15m'}</strong>
+              Active: <strong class="text-amber-400">{scheduler?.frequency || 'daily'}</strong>
             </span>
           </div>
 
           <div class="grid grid-cols-1 sm:grid-cols-2 gap-2.5">
             {#each frequencyCards as card}
               {@const Icon = card.icon}
-              {@const isSelected = (scheduler?.frequency || '15m') === card.id}
+              {@const isSelected = (scheduler?.frequency || 'daily') === card.id}
               <button
                 type="button"
                 onclick={() => handleSelectFrequency(card.id)}

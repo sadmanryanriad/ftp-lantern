@@ -504,7 +504,7 @@
                 <span class="animate-ping absolute inline-flex h-full w-full rounded-full bg-amber-400 opacity-75"></span>
                 <span class="relative inline-flex rounded-full h-2 w-2 bg-amber-500"></span>
               </span>
-              <span class="font-bold flex-shrink-0">Indexing:</span>
+              <span class="font-bold flex-shrink-0">Checking:</span>
               <span class="truncate text-zinc-200">{status?.current_folder || status?.current_source || 'Dhaka-Flix Portal'}</span>
             </div>
             <div class="flex items-center gap-2 text-zinc-400 flex-shrink-0">
@@ -513,9 +513,7 @@
                 <span>•</span>
                 <span class="text-amber-400 font-bold">{Math.round(status?.items_per_second || 0)} files/s</span>
               {:else}
-                <span class="text-zinc-300 font-bold">{status?.folders_indexed_session || 0} folders checked</span>
-                <span>•</span>
-                <span class="text-emerald-400 font-semibold">Verifying</span>
+                <span class="text-amber-300 font-medium">Scanning releases...</span>
               {/if}
             </div>
           </div>

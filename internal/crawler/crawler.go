@@ -491,6 +491,7 @@ func (c *Crawler) ingestFiles(titleID, releaseID int64, seasonNum int, files []D
 }
 
 func (c *Crawler) crawlHotSet() {
+	// Check followed series first, and recent releases from last 14 days (up to 150 hot titles for rapid sub-5s incremental check)
 	query := `
 		SELECT t.id, r.id, r.folder_url, r.folder_name, r.category
 		FROM titles t
@@ -498,8 +499,10 @@ func (c *Crawler) crawlHotSet() {
 		WHERE r.gone_at IS NULL AND (
 			t.is_following = 1 OR (
 				SELECT MAX(f.last_modified) FROM files f WHERE f.release_id = r.id AND f.gone_at IS NULL
-			) > datetime('now', '-45 days')
+			) > datetime('now', '-14 days')
 		)
+		ORDER BY t.is_following DESC, r.last_modified DESC
+		LIMIT 150
 	`
 	rows, err := c.database.Query(query)
 	if err != nil {

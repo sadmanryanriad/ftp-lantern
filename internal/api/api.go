@@ -901,7 +901,7 @@ func (s *Server) handleGetScheduler(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, map[string]interface{}{
 		"interval_minutes":        intervalMin,
 		"base_interval_minutes":   s.cfg.BaseCrawlIntervalMinutes,
-		"frequency":               s.database.GetSetting("crawl_frequency", "15m"),
+		"frequency":               s.database.GetSetting("crawl_frequency", "daily"),
 		"turbo_mode":              isTurbo,
 		"turbo_active":            isTurbo,
 		"turbo_until":             turboUntil,
