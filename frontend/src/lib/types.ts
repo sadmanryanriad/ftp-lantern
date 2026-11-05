@@ -43,18 +43,20 @@ export interface Release {
 
 export interface MediaFile {
   id: number;
-  release_id: number;
-  title_id: number;
+  release_id?: number;
+  title_id?: number;
   season_number?: number;
   episode_number?: number;
   episode_code?: string;
   name: string;
   file_url: string;
-  file_size_bytes: number;
+  file_size_bytes?: number;
+  size_bytes?: number;
+  size_human?: string;
   resolution: string;
   source: string;
   has_hdr: boolean | number;
-  first_seen: string;
+  first_seen?: string;
   last_modified?: string;
   is_watched?: boolean;
 }

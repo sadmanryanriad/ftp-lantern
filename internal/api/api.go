@@ -553,18 +553,19 @@ func (s *Server) fetchTitlesByIDs(ids []int64) []TitleCard {
 }
 
 type EpisodeInfo struct {
-	ID           int64  `json:"id"`
-	SeasonNumber int    `json:"season_number"`
-	EpNumber     int    `json:"episode_number"`
-	EpisodeCode  string `json:"episode_code"`
-	Name         string `json:"name"`
-	FileURL      string `json:"file_url"`
-	IntentURL    string `json:"intent_url"`
-	SizeBytes    int64  `json:"size_bytes"`
-	SizeHuman    string `json:"size_human"`
-	Resolution   string `json:"resolution"`
-	Source       string `json:"source"`
-	HasHDR       bool   `json:"has_hdr"`
+	ID            int64  `json:"id"`
+	SeasonNumber  int    `json:"season_number"`
+	EpNumber      int    `json:"episode_number"`
+	EpisodeCode   string `json:"episode_code"`
+	Name          string `json:"name"`
+	FileURL       string `json:"file_url"`
+	IntentURL     string `json:"intent_url"`
+	SizeBytes     int64  `json:"size_bytes"`
+	FileSizeBytes int64  `json:"file_size_bytes"`
+	SizeHuman     string `json:"size_human"`
+	Resolution    string `json:"resolution"`
+	Source        string `json:"source"`
+	HasHDR        bool   `json:"has_hdr"`
 }
 
 type TitleDetails struct {
@@ -610,6 +611,7 @@ func (s *Server) handleTitleDetails(w http.ResponseWriter, r *http.Request) {
 			}
 			ep.HasHDR = (hasHDRInt == 1)
 			ep.IntentURL = player.BuildAndroidIntent(ep.FileURL)
+			ep.FileSizeBytes = ep.SizeBytes
 			ep.SizeHuman = formatBytes(ep.SizeBytes)
 			details.Episodes = append(details.Episodes, ep)
 		}

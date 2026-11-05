@@ -90,7 +90,7 @@
             {file.episode_code ? `${file.episode_code}: ` : ''}{file.name}
           </h3>
           <div class="flex items-center gap-2 mt-1 text-xs font-mono text-zinc-400">
-            <span>{formatBytes(file.file_size_bytes)}</span>
+            <span>{file.size_human || formatBytes(file.file_size_bytes || file.size_bytes || 0)}</span>
             {#if file.resolution}
               <span>• {file.resolution}</span>
             {/if}

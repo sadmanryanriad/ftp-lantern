@@ -22,6 +22,7 @@
     playOnAndroid,
     playOnMPV,
     getMPVCommand,
+    copyToClipboard,
     playOnPotPlayer,
     playOnVLC,
     recordPlay,
@@ -43,6 +44,8 @@
 
   let activeSeason = $state<number>(1);
   let copiedFileId = $state<number | null>(null);
+  let copiedCliFileId = $state<number | null>(null);
+  let mpvLaunchedFileId = $state<number | null>(null);
   let isFollowing = $state<boolean>(false);
 
   // Group files by season
@@ -135,27 +138,31 @@
   }
 
   async function copyStreamLink(file: MediaFile) {
-    try {
-      await navigator.clipboard.writeText(file.file_url);
+    const success = await copyToClipboard(file.file_url);
+    if (success) {
       copiedFileId = file.id;
       setTimeout(() => {
         if (copiedFileId === file.id) copiedFileId = null;
       }, 2000);
-    } catch (err) {
-      console.error('Failed to copy stream link:', err);
     }
   }
 
   async function copyMPVCommand(file: MediaFile) {
-    try {
-      await navigator.clipboard.writeText(getMPVCommand(file.file_url));
-      copiedFileId = file.id;
+    const success = await copyToClipboard(getMPVCommand(file.file_url));
+    if (success) {
+      copiedCliFileId = file.id;
       setTimeout(() => {
-        if (copiedFileId === file.id) copiedFileId = null;
+        if (copiedCliFileId === file.id) copiedCliFileId = null;
       }, 2000);
-    } catch (err) {
-      console.error('Failed to copy MPV command:', err);
     }
+  }
+
+  function handlePlayMPV(file: MediaFile) {
+    playOnMPV(file.file_url, file.id);
+    mpvLaunchedFileId = file.id;
+    setTimeout(() => {
+      if (mpvLaunchedFileId === file.id) mpvLaunchedFileId = null;
+    }, 2500);
   }
 </script>
 
@@ -313,7 +320,7 @@
                 </div>
 
                 <div class="flex items-center gap-3 mt-1.5 text-xs font-mono text-zinc-400">
-                  <span class="text-amber-300 font-bold">{formatBytes(ep.file_size_bytes)}</span>
+                  <span class="text-amber-300 font-bold">{ep.size_human || formatBytes(ep.file_size_bytes || ep.size_bytes || 0)}</span>
                   {#if ep.resolution}
                     <span>• {ep.resolution}</span>
                   {/if}
@@ -331,12 +338,17 @@
                 <!-- 1-Click MPV Launch (Primary) -->
                 <button
                   type="button"
-                  onclick={() => playOnMPV(ep.file_url, ep.id)}
+                  onclick={() => handlePlayMPV(ep)}
                   class="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-gradient-to-r from-amber-500/20 to-orange-500/20 hover:from-amber-500/30 hover:to-orange-500/30 text-amber-300 text-xs font-bold border border-amber-500/40 shadow-sm transition-all hover:scale-105 active:scale-95"
-                  title="Direct 1-Click Launch in MPV Player"
+                  title="Direct 1-Click Launch: Auto-copies MPV command & downloads playlist"
                 >
-                  <Play class="w-3.5 h-3.5 fill-current text-amber-400" />
-                  <span>MPV</span>
+                  {#if mpvLaunchedFileId === ep.id}
+                    <Check class="w-3.5 h-3.5 text-emerald-400" />
+                    <span class="text-emerald-400">Opening...</span>
+                  {:else}
+                    <Play class="w-3.5 h-3.5 fill-current text-amber-400" />
+                    <span>MPV</span>
+                  {/if}
                 </button>
 
                 <!-- 1-Click VLC Launch -->
@@ -386,7 +398,7 @@
                 <button
                   type="button"
                   onclick={() => copyStreamLink(ep)}
-                  class="p-2 rounded-lg bg-zinc-800 hover:bg-zinc-700 text-zinc-400 hover:text-zinc-200 border border-zinc-700 transition-colors"
+                  class="p-2 rounded-lg border transition-colors {copiedFileId === ep.id ? 'text-emerald-400 border-emerald-500/40 bg-emerald-500/10' : 'bg-zinc-800 hover:bg-zinc-700 text-zinc-400 hover:text-zinc-200 border-zinc-700'}"
                   title={copiedFileId === ep.id ? 'Copied URL to Clipboard!' : 'Copy Direct Stream URL'}
                   aria-label="Copy stream URL"
                 >
@@ -401,10 +413,15 @@
                 <button
                   type="button"
                   onclick={() => copyMPVCommand(ep)}
-                  class="px-2 py-1.5 rounded-lg bg-zinc-850 hover:bg-zinc-800 text-[11px] font-mono text-zinc-400 hover:text-zinc-200 border border-zinc-800 transition-colors"
+                  class="inline-flex items-center gap-1 px-2 py-1.5 rounded-lg bg-zinc-850 hover:bg-zinc-800 text-[11px] font-mono border transition-colors {copiedCliFileId === ep.id ? 'text-emerald-400 border-emerald-500/40 bg-emerald-500/10' : 'text-zinc-400 hover:text-zinc-200 border-zinc-800'}"
                   title="Copy 'mpv URL' CLI command"
                 >
-                  CLI
+                  {#if copiedCliFileId === ep.id}
+                    <Check class="w-3 h-3 text-emerald-400" />
+                    <span>Copied!</span>
+                  {:else}
+                    <span>CLI</span>
+                  {/if}
                 </button>
 
                 <!-- Download M3U playlist file -->

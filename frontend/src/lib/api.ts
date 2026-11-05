@@ -200,9 +200,59 @@ export async function setNotificationMode(mode: string): Promise<void> {
   if (!res.ok) throw new Error(`Set notification mode HTTP ${res.status}`);
 }
 
+export async function copyToClipboard(text: string): Promise<boolean> {
+  if (typeof navigator !== 'undefined' && navigator.clipboard && navigator.clipboard.writeText) {
+    try {
+      await navigator.clipboard.writeText(text);
+      return true;
+    } catch {
+      // Fall through to textarea fallback
+    }
+  }
+
+  // Fallback for non-secure HTTP contexts on LAN
+  try {
+    const textArea = document.createElement('textarea');
+    textArea.value = text;
+    textArea.style.position = 'fixed';
+    textArea.style.left = '-999999px';
+    textArea.style.top = '-999999px';
+    textArea.setAttribute('readonly', '');
+    document.body.appendChild(textArea);
+    textArea.focus();
+    textArea.select();
+    const successful = document.execCommand('copy');
+    textArea.remove();
+    return successful;
+  } catch (err) {
+    console.error('Fallback copy failed:', err);
+    return false;
+  }
+}
+
 export function playOnMPV(streamUrl: string, fileId?: number): void {
   if (fileId) recordPlay(fileId);
-  window.location.href = `mpv://${streamUrl}`;
+
+  // 1. Copy direct mpv CLI command to clipboard automatically
+  copyToClipboard(getMPVCommand(streamUrl));
+
+  // 2. Download 1-click .m3u playlist (opens MPV directly if associated with .m3u)
+  if (fileId) {
+    downloadM3U(`/play/file/${fileId}.m3u`);
+  }
+
+  // 3. Trigger native mpv:// protocol handler if registered
+  try {
+    const iframe = document.createElement('iframe');
+    iframe.style.display = 'none';
+    iframe.src = `mpv://${streamUrl}`;
+    document.body.appendChild(iframe);
+    setTimeout(() => {
+      document.body.removeChild(iframe);
+    }, 1500);
+  } catch {
+    // Protocol handler not registered
+  }
 }
 
 export function getMPVCommand(streamUrl: string): string {
