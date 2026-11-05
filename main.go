@@ -166,7 +166,7 @@ func runScheduler(database *db.DB, c *crawler.Crawler, notif *notifier.Notifier,
 		loc = time.Local
 	}
 
-	var lastDailyCrawlDay int = -1
+	var lastDailyCrawlSlot string
 	var lastDailyDigestDay int = -1
 	var lastTurboCrawl time.Time = time.Now()
 
@@ -187,8 +187,8 @@ func runScheduler(database *db.DB, c *crawler.Crawler, notif *notifier.Notifier,
 				}
 			}
 
-			// Frequency setting: "daily" (default), "15m", "30m", "1h", "manual"
-			frequency := database.GetSetting("crawl_frequency", "daily")
+			// Frequency setting: "twice_daily" (default), "daily", "1h", "15m", "manual"
+			frequency := database.GetSetting("crawl_frequency", "twice_daily")
 
 			if isTurbo || frequency == "15m" {
 				// Crawl every 15 minutes
@@ -196,16 +196,6 @@ func runScheduler(database *db.DB, c *crawler.Crawler, notif *notifier.Notifier,
 					lastTurboCrawl = now
 					go func() {
 						log.Printf("[Scheduler] Incremental crawl starting (15m interval)")
-						if err := c.Crawl(cfg.SourceURLs); err == nil {
-							notif.DispatchFollowedEvents()
-						}
-					}()
-				}
-			} else if frequency == "30m" {
-				if lastTurboCrawl.IsZero() || now.Sub(lastTurboCrawl) >= 30*time.Minute {
-					lastTurboCrawl = now
-					go func() {
-						log.Printf("[Scheduler] Incremental crawl starting (30m interval)")
 						if err := c.Crawl(cfg.SourceURLs); err == nil {
 							notif.DispatchFollowedEvents()
 						}
@@ -222,11 +212,23 @@ func runScheduler(database *db.DB, c *crawler.Crawler, notif *notifier.Notifier,
 					}()
 				}
 			} else if frequency == "daily" {
-				// Normal daily schedule: crawl at 07:00 AM Asia/Dhaka
-				if nowLocal.Hour() == 7 && nowLocal.Minute() == 0 && lastDailyCrawlDay != currentDay {
-					lastDailyCrawlDay = currentDay
+				// Single morning scan: crawl at 07:00 AM Asia/Dhaka
+				if nowLocal.Hour() == 7 && nowLocal.Minute() == 0 && lastDailyCrawlSlot != fmt.Sprintf("%d-7", currentDay) {
+					lastDailyCrawlSlot = fmt.Sprintf("%d-7", currentDay)
 					go func() {
 						log.Printf("[Scheduler] Daily scheduled crawl starting at 07:00 AM")
+						if err := c.Crawl(cfg.SourceURLs); err == nil {
+							notif.DispatchFollowedEvents()
+						}
+					}()
+				}
+			} else if frequency == "twice_daily" || frequency == "" {
+				// Twice a day: 07:00 AM and 07:00 PM (19:00) Asia/Dhaka
+				slot := fmt.Sprintf("%d-%d", currentDay, nowLocal.Hour())
+				if (nowLocal.Hour() == 7 || nowLocal.Hour() == 19) && nowLocal.Minute() == 0 && lastDailyCrawlSlot != slot {
+					lastDailyCrawlSlot = slot
+					go func() {
+						log.Printf("[Scheduler] Twice-daily scheduled crawl starting at %02d:00", nowLocal.Hour())
 						if err := c.Crawl(cfg.SourceURLs); err == nil {
 							notif.DispatchFollowedEvents()
 						}

@@ -2,7 +2,6 @@
   import { onMount } from 'svelte';
   import Navbar from './lib/components/Navbar.svelte';
   import SearchBar from './lib/components/SearchBar.svelte';
-  import ContinueWatching from './lib/components/ContinueWatching.svelte';
   import WhatsNew from './lib/components/WhatsNew.svelte';
   import MediaShelf from './lib/components/MediaShelf.svelte';
   import PosterGrid from './lib/components/PosterGrid.svelte';
@@ -16,14 +15,12 @@
     TitleDetail,
     MediaFile,
     SystemStatus,
-    SchedulerStatus,
-    ContinueWatchingItem
+    SchedulerStatus
   } from './lib/types';
   import {
     fetchStatus,
     fetchScheduler,
     fetchWhatsNew,
-    fetchContinueWatching,
     searchTitles,
     fetchTitleDetail,
     downloadM3U
@@ -43,7 +40,6 @@
   let status = $state<SystemStatus | null>(getInitialStatus());
   let scheduler = $state<SchedulerStatus | null>(null);
   let whatsNew = $state<Title[]>([]);
-  let continueWatching = $state<ContinueWatchingItem[]>([]);
   
   // Home block shelves data
   let homeMovies = $state<Title[]>([]);
@@ -112,14 +108,12 @@
 
   async function loadShelves() {
     try {
-      const [wnRes, cwRes, movRes, serRes] = await Promise.allSettled([
+      const [wnRes, movRes, serRes] = await Promise.allSettled([
         fetchWhatsNew(16),
-        fetchContinueWatching(),
         searchTitles({ type: 'movie', limit: 16, sort: 'recent' }),
         searchTitles({ type: 'series', limit: 16, sort: 'recent' })
       ]);
       if (wnRes.status === 'fulfilled') whatsNew = wnRes.value;
-      if (cwRes.status === 'fulfilled') continueWatching = cwRes.value;
       if (movRes.status === 'fulfilled') homeMovies = movRes.value.results || [];
       if (serRes.status === 'fulfilled') homeSeries = serRes.value.results || [];
     } catch (err) {
@@ -322,14 +316,6 @@
   function handlePreviewVideo(file: MediaFile) {
     previewFile = file;
     previewTitleName = selectedTitleDetail?.name || '';
-  }
-
-  function handlePlayNext(item: ContinueWatchingItem) {
-    if (item.next_file_id) {
-      downloadM3U(`/play/file/${item.next_file_id}.m3u`, item.next_file_id);
-    } else {
-      openTitleDetail(item.title_id);
-    }
   }
 
   // Popstate listener for mouse forward/backward & browser navigation
@@ -597,13 +583,6 @@
     <!-- VIEW 2: HOMEPAGE (3 BLOCKS ARCHITECTURE) -->
     {:else if activeTab === 'home'}
       
-      <!-- Continue Watching Shelf -->
-      <ContinueWatching
-        items={continueWatching}
-        onSelectTitle={(id) => openTitleDetail(id, true)}
-        onPlayNext={handlePlayNext}
-      />
-
       <!-- BLOCK 1: What's New on BDIX (Recently Added horizontal shelf) -->
       <WhatsNew
         items={whatsNew}

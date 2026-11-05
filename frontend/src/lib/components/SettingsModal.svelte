@@ -64,18 +64,18 @@
 
   const frequencyCards = [
     {
-      id: 'daily',
-      title: 'Daily at 7:00 AM',
-      subtitle: 'Single morning scan + 8:01 AM digest',
+      id: 'twice_daily',
+      title: 'Twice Daily (7 AM & 7 PM)',
+      subtitle: 'Morning & evening scan + 8:01 AM digest',
       recommended: true,
       icon: Flame
     },
     {
-      id: '15m',
-      title: '15-Min Pulse',
-      subtitle: 'Continuous incremental checks',
+      id: 'daily',
+      title: 'Daily at 7:00 AM',
+      subtitle: 'Single morning scan + 8:01 AM digest',
       recommended: false,
-      icon: Zap
+      icon: Clock
     },
     {
       id: '1h',
@@ -83,6 +83,13 @@
       subtitle: 'Scans once every 60 minutes',
       recommended: false,
       icon: Clock
+    },
+    {
+      id: '15m',
+      title: '15-Min Pulse',
+      subtitle: 'Continuous incremental checks',
+      recommended: false,
+      icon: Zap
     },
     {
       id: 'manual',
@@ -403,14 +410,14 @@
               <h3 class="text-sm font-bold text-zinc-100">Automatic Crawl Rhythm</h3>
             </div>
             <span class="text-[11px] font-mono text-zinc-400">
-              Active: <strong class="text-amber-400">{scheduler?.frequency || 'daily'}</strong>
+              Active: <strong class="text-amber-400">{scheduler?.frequency || 'twice_daily'}</strong>
             </span>
           </div>
 
           <div class="grid grid-cols-1 sm:grid-cols-2 gap-2.5">
             {#each frequencyCards as card}
               {@const Icon = card.icon}
-              {@const isSelected = (scheduler?.frequency || 'daily') === card.id}
+              {@const isSelected = (scheduler?.frequency || 'twice_daily') === card.id}
               <button
                 type="button"
                 onclick={() => handleSelectFrequency(card.id)}

@@ -287,6 +287,15 @@ func (c *Crawler) crawlSource(sourceURL string) error {
 	return nil
 }
 
+func normalizeMtime(s string) string {
+	s = strings.TrimSpace(s)
+	s = strings.ReplaceAll(s, "T", " ")
+	if len(s) >= 16 {
+		return s[:16]
+	}
+	return s
+}
+
 func (c *Crawler) crawlCategory(sourceServer, canonicalCategory, folderName, categoryURL string) {
 	c.statsLock.Lock()
 	c.currentSource = canonicalCategory
@@ -311,8 +320,15 @@ func (c *Crawler) crawlCategory(sourceServer, canonicalCategory, folderName, cat
 
 		if err == nil {
 			// Title already exists in DB
-			if it.LastModified != "" && it.LastModified == recordedMtime {
+			normHTML := normalizeMtime(it.LastModified)
+			normDB := normalizeMtime(recordedMtime)
+			if normHTML != "" && normHTML == normDB {
 				// Title folder mtime unchanged, skip descending!
+				c.foldersIndexedSession.Add(1)
+				continue
+			}
+			if normHTML == "" && recordedMtime != "" {
+				// Missing mtime in HTML but folder already recorded
 				c.foldersIndexedSession.Add(1)
 				continue
 			}
@@ -491,18 +507,18 @@ func (c *Crawler) ingestFiles(titleID, releaseID int64, seasonNum int, files []D
 }
 
 func (c *Crawler) crawlHotSet() {
-	// Check followed series first, and recent releases from last 14 days (up to 150 hot titles for rapid sub-5s incremental check)
+	// Check followed series first, and recent releases from last 14 days (up to 50 hot series for rapid sub-2s incremental check)
 	query := `
 		SELECT t.id, r.id, r.folder_url, r.folder_name, r.category
 		FROM titles t
 		JOIN releases r ON r.title_id = t.id
-		WHERE r.gone_at IS NULL AND (
+		WHERE t.type = 'series' AND r.gone_at IS NULL AND (
 			t.is_following = 1 OR (
 				SELECT MAX(f.last_modified) FROM files f WHERE f.release_id = r.id AND f.gone_at IS NULL
 			) > datetime('now', '-14 days')
 		)
 		ORDER BY t.is_following DESC, r.last_modified DESC
-		LIMIT 150
+		LIMIT 50
 	`
 	rows, err := c.database.Query(query)
 	if err != nil {

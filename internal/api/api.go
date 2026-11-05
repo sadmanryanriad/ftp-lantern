@@ -204,54 +204,7 @@ type ContinueWatchingItem struct {
 
 func (s *Server) handleTitles(w http.ResponseWriter, r *http.Request) {
 	if r.URL.Query().Get("continue_watching") == "true" {
-		query := `
-			SELECT t.id, t.name, COALESCE(t.poster_url, ''), COALESCE(t.thumb_hash, ''),
-			       p.file_id, p.played_at, f.episode_code,
-			       COALESCE(MAX(r.resolution), 'Unknown') as resolution
-			FROM plays p
-			JOIN titles t ON t.id = p.title_id
-			JOIN files f ON f.id = p.file_id
-			LEFT JOIN releases r ON r.title_id = t.id AND r.gone_at IS NULL
-			GROUP BY t.id
-			ORDER BY p.played_at DESC
-			LIMIT 15
-		`
-		rows, err := s.database.Query(query)
-		if err != nil {
-			writeJSON(w, []ContinueWatchingItem{})
-			return
-		}
-		defer rows.Close()
-
-		var list []ContinueWatchingItem
-		for rows.Next() {
-			var item ContinueWatchingItem
-			err := rows.Scan(&item.TitleID, &item.TitleName, &item.PosterURL, &item.ThumbHash, &item.LastPlayedFileID, &item.LastPlayedAt, &item.LastPlayedCode, &item.Resolution)
-			if err == nil {
-				list = append(list, item)
-			}
-		}
-		_ = rows.Close()
-
-		for i := range list {
-			// Find next episode
-			var nextID int64
-			var nextCode, nextURL string
-			errNext := s.database.QueryRow(`
-				SELECT id, episode_code, file_url
-				FROM files
-				WHERE title_id = ? AND id > ? AND gone_at IS NULL
-				ORDER BY season_number ASC, episode_number ASC, id ASC
-				LIMIT 1`, list[i].TitleID, list[i].LastPlayedFileID).Scan(&nextID, &nextCode, &nextURL)
-
-			if errNext == nil {
-				list[i].NextFileID = &nextID
-				list[i].NextEpisodeCode = nextCode
-				list[i].NextFileURL = nextURL
-			}
-		}
-
-		writeJSON(w, list)
+		writeJSON(w, []ContinueWatchingItem{})
 		return
 	}
 
@@ -658,51 +611,12 @@ func (s *Server) handleToggleFollow(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) handleRecordPlay(w http.ResponseWriter, r *http.Request) {
-	body, err := io.ReadAll(r.Body)
-	if err != nil {
-		http.Error(w, err.Error(), http.StatusBadRequest)
-		return
-	}
-	defer r.Body.Close()
-
-	var req struct {
-		FileID int64 `json:"file_id"`
-	}
-	if err := json.Unmarshal(body, &req); err != nil {
-		http.Error(w, "invalid JSON", http.StatusBadRequest)
-		return
-	}
-
-	var titleID int64
-	err = s.database.QueryRow("SELECT title_id FROM files WHERE id = ?", req.FileID).Scan(&titleID)
-	if err != nil {
-		http.Error(w, "file not found", http.StatusNotFound)
-		return
-	}
-
-	_, _ = s.database.Exec("INSERT INTO plays (file_id, title_id) VALUES (?, ?)", req.FileID, titleID)
+	// Watch history disabled per user policy
 	writeJSON(w, map[string]bool{"ok": true})
 }
 
 func (s *Server) handleMarkWatched(w http.ResponseWriter, r *http.Request) {
-	body, _ := io.ReadAll(r.Body)
-	defer r.Body.Close()
-
-	var req struct {
-		FileID int64 `json:"file_id"`
-	}
-	_ = json.Unmarshal(body, &req)
-
-	var titleID int64
-	var seasonNum, epNum int
-	err := s.database.QueryRow("SELECT title_id, season_number, episode_number FROM files WHERE id = ?", req.FileID).Scan(&titleID, &seasonNum, &epNum)
-	if err != nil {
-		http.Error(w, "file not found", http.StatusNotFound)
-		return
-	}
-
-	// Insert play record
-	_, _ = s.database.Exec("INSERT INTO plays (file_id, title_id) VALUES (?, ?)", req.FileID, titleID)
+	// Watch history disabled per user policy
 	writeJSON(w, map[string]bool{"ok": true})
 }
 
@@ -792,11 +706,6 @@ func (s *Server) handleSingleFilePlaylist(w http.ResponseWriter, r *http.Request
 		return
 	}
 
-	// Record play
-	var titleID int64
-	_ = s.database.QueryRow("SELECT title_id FROM files WHERE id = ?", id).Scan(&titleID)
-	_, _ = s.database.Exec("INSERT INTO plays (file_id, title_id) VALUES (?, ?)", id, titleID)
-
 	playlist := player.BuildSingleFilePlaylist(f.TitleName, f)
 
 	w.Header().Set("Content-Type", "audio/x-mpegurl; charset=utf-8")
@@ -865,9 +774,6 @@ func (s *Server) handleSeasonPlaylist(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Record play for first episode
-	_, _ = s.database.Exec("INSERT INTO plays (file_id, title_id) VALUES (?, ?)", files[0].ID, titleID)
-
 	playlist := player.BuildSeasonPlaylist(titleName, files)
 
 	w.Header().Set("Content-Type", "audio/x-mpegurl; charset=utf-8")
@@ -901,7 +807,7 @@ func (s *Server) handleGetScheduler(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, map[string]interface{}{
 		"interval_minutes":        intervalMin,
 		"base_interval_minutes":   s.cfg.BaseCrawlIntervalMinutes,
-		"frequency":               s.database.GetSetting("crawl_frequency", "daily"),
+		"frequency":               s.database.GetSetting("crawl_frequency", "twice_daily"),
 		"turbo_mode":              isTurbo,
 		"turbo_active":            isTurbo,
 		"turbo_until":             turboUntil,

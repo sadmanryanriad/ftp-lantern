@@ -136,7 +136,7 @@
       >
         <Zap class="w-3.5 h-3.5 {isTurbo ? 'text-amber-400 fill-amber-400/30 animate-pulse' : 'text-zinc-400'}" />
         <span class="font-mono text-[11px]">
-          {isTurbo ? 'Turbo: 15m' : (scheduler?.frequency === '15m' ? 'Pulse: 15m' : scheduler?.frequency === '1h' ? 'Hourly' : scheduler?.frequency === 'manual' ? 'Manual' : 'Daily: 7am')}
+          {isTurbo ? 'Turbo: 15m' : (scheduler?.frequency === '15m' ? 'Pulse: 15m' : scheduler?.frequency === '1h' ? 'Hourly' : scheduler?.frequency === 'daily' ? 'Daily: 7am' : scheduler?.frequency === 'manual' ? 'Manual' : 'Twice Daily')}
         </span>
       </button>
 

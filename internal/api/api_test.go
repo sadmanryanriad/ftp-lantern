@@ -75,7 +75,7 @@ func TestContinueWatchingNoDeadlock(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	// Request Continue Watching
+	// Request Continue Watching (should return empty list as history is disabled)
 	req := httptest.NewRequest("GET", "/api/titles?continue_watching=true", nil)
 	rec := httptest.NewRecorder()
 	mux.ServeHTTP(rec, req)
@@ -89,17 +89,8 @@ func TestContinueWatchingNoDeadlock(t *testing.T) {
 		t.Fatalf("failed to decode json: %v", err)
 	}
 
-	if len(items) != 1 {
-		t.Fatalf("expected 1 continue watching item, got %d", len(items))
-	}
-
-	if items[0].TitleName != "Severance" {
-		t.Errorf("expected title Severance, got %s", items[0].TitleName)
-	}
-
-	// Verify next episode was populated
-	if items[0].NextEpisodeCode != "S01E02" {
-		t.Errorf("expected next episode S01E02, got %s", items[0].NextEpisodeCode)
+	if len(items) != 0 {
+		t.Fatalf("expected 0 continue watching items since watch history is disabled, got %d", len(items))
 	}
 }
 
