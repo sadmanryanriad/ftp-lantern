@@ -291,6 +291,7 @@ func (s *Server) handleSearch(w http.ResponseWriter, r *http.Request) {
 		var args []interface{}
 		var countArgs []interface{}
 
+		needReleaseJoin := false
 		if followingParam {
 			whereClause += " AND t.is_following = 1"
 		}
@@ -298,6 +299,7 @@ func (s *Server) handleSearch(w http.ResponseWriter, r *http.Request) {
 			whereClause += " AND r.resolution = ?"
 			args = append(args, resolution)
 			countArgs = append(countArgs, resolution)
+			needReleaseJoin = true
 		}
 		if reqType != "" && reqType != "all" {
 			whereClause += " AND t.type = ?"
@@ -308,6 +310,7 @@ func (s *Server) handleSearch(w http.ResponseWriter, r *http.Request) {
 			whereClause += " AND (r.category LIKE ? OR r.folder_url LIKE ?)"
 			args = append(args, "%"+category+"%", "%"+category+"%")
 			countArgs = append(countArgs, "%"+category+"%", "%"+category+"%")
+			needReleaseJoin = true
 		}
 		if yearParam != "" && yearParam != "All" {
 			if strings.Contains(yearParam, "-") {
@@ -350,12 +353,13 @@ func (s *Server) handleSearch(w http.ResponseWriter, r *http.Request) {
 			}
 		}
 
-		// Count query
-		countSQL := `
-			SELECT COUNT(DISTINCT t.id)
-			FROM titles t
-			LEFT JOIN releases r ON r.title_id = t.id AND r.gone_at IS NULL
-		` + whereClause
+		// Count query (fast index-only count if no releases joined)
+		var countSQL string
+		if needReleaseJoin {
+			countSQL = "SELECT COUNT(DISTINCT t.id) FROM titles t JOIN releases r ON r.title_id = t.id AND r.gone_at IS NULL" + whereClause
+		} else {
+			countSQL = "SELECT COUNT(*) FROM titles t" + whereClause
+		}
 		_ = s.database.QueryRow(countSQL, countArgs...).Scan(&totalCount)
 
 		// Main query
@@ -370,34 +374,27 @@ func (s *Server) handleSearch(w http.ResponseWriter, r *http.Request) {
 			orderBy = " ORDER BY t.name DESC"
 		}
 
-		sqlQuery := `
-			SELECT t.id, t.name, t.year, t.type, COALESCE(t.poster_url, ''), COALESCE(t.thumb_hash, ''), t.is_following,
-			       COALESCE(MAX(r.resolution), 'Unknown') as resolution,
-			       COALESCE(MAX(r.source), 'Unknown') as source,
-			       COALESCE(MAX(r.has_hdr), 0) as has_hdr,
-			       COALESCE(MAX(r.category), '') as category,
-			       COALESCE((SELECT SUM(f.file_size_bytes) FROM files f WHERE f.title_id = t.id AND f.gone_at IS NULL), 0) as size_bytes
-			FROM titles t
-			LEFT JOIN releases r ON r.title_id = t.id AND r.gone_at IS NULL
-		` + whereClause + " GROUP BY t.id " + orderBy + " LIMIT ? OFFSET ?"
+		// Fast two-phase pagination: fetch IDs first, then batch load details only for the requested page
+		var idQuery string
+		if needReleaseJoin {
+			idQuery = "SELECT t.id FROM titles t JOIN releases r ON r.title_id = t.id AND r.gone_at IS NULL" + whereClause + " GROUP BY t.id " + orderBy + " LIMIT ? OFFSET ?"
+		} else {
+			idQuery = "SELECT t.id FROM titles t" + whereClause + orderBy + " LIMIT ? OFFSET ?"
+		}
 		args = append(args, limit, offset)
 
-		rows, err := s.database.Query(sqlQuery, args...)
+		rows, err := s.database.Query(idQuery, args...)
 		if err == nil {
-			defer rows.Close()
+			var pageIDs []int64
 			for rows.Next() {
-				var tc TitleCard
-				var thumbHash string
-				var hasHDRInt int
-				_ = rows.Scan(&tc.ID, &tc.Name, &tc.Year, &tc.Type, &tc.PosterURL, &thumbHash, &tc.IsFollowing, &tc.Resolution, &tc.Source, &hasHDRInt, &tc.Category, &tc.SizeBytes)
-				tc.HasHDR = (hasHDRInt == 1)
-				if tc.SizeBytes > 0 {
-					tc.SizeHuman = formatBytes(tc.SizeBytes)
+				var id int64
+				if err := rows.Scan(&id); err == nil {
+					pageIDs = append(pageIDs, id)
 				}
-				if thumbHash != "" {
-					tc.ThumbURL = fmt.Sprintf("/api/thumbs/%d-%s.jpg", tc.ID, thumbHash)
-				}
-				results = append(results, tc)
+			}
+			_ = rows.Close()
+			if len(pageIDs) > 0 {
+				results = s.fetchTitlesByIDs(pageIDs)
 			}
 		}
 	} else {

@@ -14,13 +14,13 @@ export async function fetchWithTimeout(url: string, opts: RequestInit = {}, time
 }
 
 export async function fetchStatus(): Promise<SystemStatus> {
-  const res = await fetchWithTimeout(`${API_BASE}/api/status`, {}, 4000);
+  const res = await fetchWithTimeout(`${API_BASE}/api/status`, {}, 8000);
   if (!res.ok) throw new Error(`Status HTTP ${res.status}`);
   return res.json();
 }
 
 export async function fetchScheduler(): Promise<SchedulerStatus> {
-  const res = await fetchWithTimeout(`${API_BASE}/api/scheduler`, {}, 4000);
+  const res = await fetchWithTimeout(`${API_BASE}/api/scheduler`, {}, 8000);
   if (!res.ok) throw new Error(`Scheduler HTTP ${res.status}`);
   return res.json();
 }
@@ -59,7 +59,7 @@ export async function searchTitles(params: {
   if (params.limit) query.set('limit', params.limit.toString());
   if (params.sort) query.set('sort', params.sort);
 
-  const res = await fetchWithTimeout(`${API_BASE}/api/search?${query.toString()}`, {}, 6000);
+  const res = await fetchWithTimeout(`${API_BASE}/api/search?${query.toString()}`, {}, 10000);
   if (!res.ok) throw new Error(`Search HTTP ${res.status}`);
   const data = await res.json();
   // Handle both array response or { results: [...], total: ... }

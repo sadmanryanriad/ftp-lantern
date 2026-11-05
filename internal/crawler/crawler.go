@@ -313,6 +313,7 @@ func (c *Crawler) crawlCategory(sourceServer, canonicalCategory, folderName, cat
 			// Title already exists in DB
 			if it.LastModified != "" && it.LastModified == recordedMtime {
 				// Title folder mtime unchanged, skip descending!
+				c.foldersIndexedSession.Add(1)
 				continue
 			}
 			// Title folder mtime changed! (New season added to title)
@@ -522,6 +523,11 @@ func (c *Crawler) crawlHotSet() {
 	_ = rows.Close()
 
 	for _, it := range items {
+		c.statsLock.Lock()
+		c.currentFolder = it.folderName
+		c.statsLock.Unlock()
+		c.foldersIndexedSession.Add(1)
+
 		// Re-list folder contents to scan seasons
 		contents, err := c.FetchDir(it.folderURL)
 		if err != nil {

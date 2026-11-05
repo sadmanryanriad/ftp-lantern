@@ -172,9 +172,9 @@
       } else if (activeTab === 'series') {
         filterType = 'series';
       } else if (activeTab === 'anime') {
-        filterCategory = 'Anime & Cartoons';
+        if (!filterCategory) filterCategory = 'Anime & Cartoons';
       } else if (activeTab === 'documentary') {
-        filterCategory = 'Documentaries';
+        if (!filterCategory) filterCategory = 'Documentaries';
       } else if (activeTab === 'following') {
         isFollowingOnly = true;
       }
@@ -508,9 +508,15 @@
               <span class="truncate text-zinc-200">{status?.current_folder || status?.current_source || 'Dhaka-Flix Portal'}</span>
             </div>
             <div class="flex items-center gap-2 text-zinc-400 flex-shrink-0">
-              <span class="text-zinc-300 font-bold">{status?.files_indexed_session || 0} files</span>
-              <span>•</span>
-              <span class="text-amber-400 font-bold">{Math.round(status?.items_per_second || 0)} files/s</span>
+              {#if (status?.files_indexed_session || 0) > 0}
+                <span class="text-emerald-400 font-bold">+{status?.files_indexed_session} new files</span>
+                <span>•</span>
+                <span class="text-amber-400 font-bold">{Math.round(status?.items_per_second || 0)} files/s</span>
+              {:else}
+                <span class="text-zinc-300 font-bold">{status?.folders_indexed_session || 0} folders checked</span>
+                <span>•</span>
+                <span class="text-emerald-400 font-semibold">Verifying</span>
+              {/if}
             </div>
           </div>
         {/if}

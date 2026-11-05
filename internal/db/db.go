@@ -135,6 +135,19 @@ func (d *DB) migrate() error {
 		INSERT INTO titles_fts(titles_fts, rowid, name_norm) VALUES('delete', old.id, old.name_norm);
 		INSERT INTO titles_fts(rowid, name_norm) VALUES (new.id, new.name_norm);
 	END;
+
+	-- High-performance covering indexes for instant navigation & search
+	CREATE INDEX IF NOT EXISTS idx_titles_type_lastmod ON titles(type, last_modified DESC, id DESC);
+	CREATE INDEX IF NOT EXISTS idx_titles_type_year ON titles(type, year DESC, name ASC);
+	CREATE INDEX IF NOT EXISTS idx_titles_lastmod ON titles(last_modified DESC);
+	CREATE INDEX IF NOT EXISTS idx_titles_following ON titles(is_following, last_modified DESC);
+	CREATE INDEX IF NOT EXISTS idx_releases_title_gone ON releases(title_id, gone_at);
+	CREATE INDEX IF NOT EXISTS idx_releases_category ON releases(category);
+	CREATE INDEX IF NOT EXISTS idx_releases_folder_url ON releases(folder_url);
+	CREATE INDEX IF NOT EXISTS idx_releases_gone ON releases(gone_at);
+	CREATE INDEX IF NOT EXISTS idx_files_title_gone_size ON files(title_id, gone_at, file_size_bytes);
+	CREATE INDEX IF NOT EXISTS idx_files_release_gone ON files(release_id, gone_at, last_modified);
+	CREATE INDEX IF NOT EXISTS idx_plays_title_user ON plays(title_id, played_at DESC);
 	`
 
 	_, err := d.Exec(schema)
@@ -142,9 +155,13 @@ func (d *DB) migrate() error {
 		return err
 	}
 
-	// Safe idempotent column migrations
+	// Safe idempotent column and index migrations
 	_, _ = d.Exec("ALTER TABLE events ADD COLUMN instant_sent_at DATETIME")
 	_, _ = d.Exec("ALTER TABLE events ADD COLUMN digest_sent_at DATETIME")
+	_, _ = d.Exec("CREATE INDEX IF NOT EXISTS idx_titles_type_lastmod ON titles(type, last_modified DESC, id DESC)")
+	_, _ = d.Exec("CREATE INDEX IF NOT EXISTS idx_releases_title_gone ON releases(title_id, gone_at)")
+	_, _ = d.Exec("CREATE INDEX IF NOT EXISTS idx_files_title_gone_size ON files(title_id, gone_at, file_size_bytes)")
+	_, _ = d.Exec("CREATE INDEX IF NOT EXISTS idx_files_release_gone ON files(release_id, gone_at, last_modified)")
 
 	return nil
 }
