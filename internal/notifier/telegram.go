@@ -64,6 +64,7 @@ type EventRow struct {
 	Year        int
 	ThumbHash   string
 	PayloadJSON string
+	FolderURL   string
 }
 
 func (n *Notifier) DispatchEvents() {
@@ -79,12 +80,13 @@ func (n *Notifier) DispatchEvents() {
 	n.mu.Unlock()
 
 	rows, err := n.database.Query(`
-		SELECT e.id, e.kind, e.title_id, t.name, t.year, t.thumb_hash, e.payload_json
+		SELECT e.id, e.kind, e.title_id, t.name, t.year, t.thumb_hash, e.payload_json, COALESCE(r.folder_url, '')
 		FROM events e
 		JOIN titles t ON t.id = e.title_id
+		LEFT JOIN releases r ON r.id = e.release_id
 		WHERE e.digest_sent_at IS NULL AND e.failed_at IS NULL
 		ORDER BY e.created_at ASC
-		LIMIT 50
+		LIMIT 100
 	`)
 	if err != nil {
 		return
@@ -95,9 +97,16 @@ func (n *Notifier) DispatchEvents() {
 	for rows.Next() {
 		var ev EventRow
 		var thumbHash *string
-		_ = rows.Scan(&ev.ID, &ev.Kind, &ev.TitleID, &ev.TitleName, &ev.Year, &thumbHash, &ev.PayloadJSON)
+		var folderURL string
+		_ = rows.Scan(&ev.ID, &ev.Kind, &ev.TitleID, &ev.TitleName, &ev.Year, &thumbHash, &ev.PayloadJSON, &folderURL)
 		if thumbHash != nil {
 			ev.ThumbHash = *thumbHash
+		}
+		ev.FolderURL = folderURL
+		if ev.FolderURL == "" {
+			var fUrl string
+			_ = n.database.QueryRow("SELECT folder_url FROM releases WHERE title_id = ? AND gone_at IS NULL ORDER BY id ASC LIMIT 1", ev.TitleID).Scan(&fUrl)
+			ev.FolderURL = fUrl
 		}
 		events = append(events, ev)
 	}
@@ -134,9 +143,10 @@ func (n *Notifier) DispatchFollowedEvents() {
 	}
 
 	query := `
-		SELECT e.id, e.kind, e.title_id, t.name, t.year, t.thumb_hash, e.payload_json
+		SELECT e.id, e.kind, e.title_id, t.name, t.year, t.thumb_hash, e.payload_json, COALESCE(r.folder_url, '')
 		FROM events e
 		JOIN titles t ON t.id = e.title_id
+		LEFT JOIN releases r ON r.id = e.release_id
 		WHERE e.instant_sent_at IS NULL AND e.failed_at IS NULL
 	`
 	if notifyMode == "following_only" {
@@ -154,9 +164,16 @@ func (n *Notifier) DispatchFollowedEvents() {
 	for rows.Next() {
 		var ev EventRow
 		var thumbHash *string
-		_ = rows.Scan(&ev.ID, &ev.Kind, &ev.TitleID, &ev.TitleName, &ev.Year, &thumbHash, &ev.PayloadJSON)
+		var folderURL string
+		_ = rows.Scan(&ev.ID, &ev.Kind, &ev.TitleID, &ev.TitleName, &ev.Year, &thumbHash, &ev.PayloadJSON, &folderURL)
 		if thumbHash != nil {
 			ev.ThumbHash = *thumbHash
+		}
+		ev.FolderURL = folderURL
+		if ev.FolderURL == "" {
+			var fUrl string
+			_ = n.database.QueryRow("SELECT folder_url FROM releases WHERE title_id = ? AND gone_at IS NULL ORDER BY id ASC LIMIT 1", ev.TitleID).Scan(&fUrl)
+			ev.FolderURL = fUrl
 		}
 		events = append(events, ev)
 	}
@@ -235,22 +252,43 @@ func (n *Notifier) sendSingleEvent(ev EventRow) {
 		res = r
 	}
 
+	baseURL := strings.TrimRight(n.cfg.PublicBaseURL, "/")
 	caption := fmt.Sprintf(
-		"🎬 <b>New Content Added [%s]</b>\n📺 <b>%s</b>\n🎞 Quality: %s\n🔗 <a href=\"%s/#/title/%d\">Open in FTP-Lantern</a>",
+		"🎬 <b>New Content Added [%s]</b>\n📺 <b><a href=\"%s/#/title/%d\">%s</a></b>\n🎞 Quality: %s\n🔗 <a href=\"%s/#/title/%d\">Open in FTP-Lantern</a>",
 		html.EscapeString(res),
+		baseURL,
+		ev.TitleID,
 		titleEsc,
 		html.EscapeString(res),
-		n.cfg.PublicBaseURL,
+		baseURL,
 		ev.TitleID,
 	)
+	if ev.FolderURL != "" {
+		caption += fmt.Sprintf("\n🌐 <a href=\"%s\">Open ISP Folder</a>", html.EscapeString(ev.FolderURL))
+	}
+
+	var rowButtons []map[string]string
+	rowButtons = append(rowButtons, map[string]string{
+		"text": "🔗 Open in FTP-Lantern",
+		"url":  fmt.Sprintf("%s/#/title/%d", baseURL, ev.TitleID),
+	})
+	if ev.FolderURL != "" {
+		rowButtons = append(rowButtons, map[string]string{
+			"text": "🌐 Direct ISP Folder",
+			"url":  ev.FolderURL,
+		})
+	}
+	replyMarkup := map[string]interface{}{
+		"inline_keyboard": [][]map[string]string{rowButtons},
+	}
 
 	thumbPath := n.thumbsMgr.ThumbPath(ev.TitleID, ev.ThumbHash)
 	var err error
 
 	if _, statErr := os.Stat(thumbPath); statErr == nil {
-		err = n.sendPhoto(thumbPath, caption)
+		err = n.sendPhotoWithKeyboard(thumbPath, caption, replyMarkup)
 	} else {
-		err = n.sendMessage(caption)
+		err = n.sendMessageWithKeyboard(caption, replyMarkup)
 	}
 
 	if err != nil {
@@ -261,64 +299,114 @@ func (n *Notifier) sendSingleEvent(ev EventRow) {
 }
 
 func (n *Notifier) sendBatchDigest(events []EventRow) {
-	var sb strings.Builder
-	sb.WriteString(fmt.Sprintf("🎬 <b>FTP-Lantern — %d New Updates</b>\n\n", len(events)))
+	baseURL := strings.TrimRight(n.cfg.PublicBaseURL, "/")
+	ispSiteURL := ""
+	if len(n.cfg.SourceURLs) > 0 {
+		ispSiteURL = n.cfg.SourceURLs[0]
+	}
 
-	addedCount := 0
-	var successIDs []int64
+	var inlineKeyboard [][]map[string]string
+	rowButtons := []map[string]string{
+		{"text": "🔗 Open in FTP-Lantern", "url": baseURL},
+	}
+	if ispSiteURL != "" {
+		rowButtons = append(rowButtons, map[string]string{
+			"text": "🌐 Direct ISP Site",
+			"url":  ispSiteURL,
+		})
+	}
+	inlineKeyboard = append(inlineKeyboard, rowButtons)
+	replyMarkup := map[string]interface{}{
+		"inline_keyboard": inlineKeyboard,
+	}
 
-	for _, ev := range events {
-		var payload map[string]interface{}
-		_ = json.Unmarshal([]byte(ev.PayloadJSON), &payload)
+	totalEvents := len(events)
+	itemIndex := 0
 
-		res := "1080p"
-		if r, ok := payload["resolution"].(string); ok && r != "" {
-			res = r
+	for itemIndex < totalEvents {
+		var sb strings.Builder
+		if totalEvents > 30 {
+			sb.WriteString(fmt.Sprintf("🎬 <b>FTP-Lantern — Updates (%d-%d of %d)</b>\n\n", itemIndex+1, min(itemIndex+30, totalEvents), totalEvents))
+		} else {
+			sb.WriteString(fmt.Sprintf("🎬 <b>FTP-Lantern — %d New Updates</b>\n\n", totalEvents))
 		}
 
-		titleName := ev.TitleName
-		if ev.Year > 0 && !strings.Contains(titleName, fmt.Sprintf("(%d)", ev.Year)) {
-			titleName = fmt.Sprintf("%s (%d)", titleName, ev.Year)
+		var chunkIDs []int64
+		for itemIndex < totalEvents {
+			ev := events[itemIndex]
+			var payload map[string]interface{}
+			_ = json.Unmarshal([]byte(ev.PayloadJSON), &payload)
+
+			res := "1080p"
+			if r, ok := payload["resolution"].(string); ok && r != "" {
+				res = r
+			}
+
+			titleName := ev.TitleName
+			if ev.Year > 0 && !strings.Contains(titleName, fmt.Sprintf("(%d)", ev.Year)) {
+				titleName = fmt.Sprintf("%s (%d)", titleName, ev.Year)
+			}
+
+			// Numbered list with direct link to http://192.168.0.134:8087/#/title/<id>
+			line := fmt.Sprintf("%d. <a href=\"%s/#/title/%d\"><b>%s</b></a> — [%s]", itemIndex+1, baseURL, ev.TitleID, html.EscapeString(titleName), html.EscapeString(res))
+			if ev.FolderURL != "" {
+				line += fmt.Sprintf(" • <a href=\"%s\">ISP</a>", html.EscapeString(ev.FolderURL))
+			}
+			line += "\n"
+
+			// Check item-boundary character threshold (3500 to leave safety buffer for footer and markup)
+			if sb.Len()+len(line) > 3500 {
+				break
+			}
+
+			sb.WriteString(line)
+			chunkIDs = append(chunkIDs, ev.ID)
+			itemIndex++
 		}
 
-		line := fmt.Sprintf("• <b>%s</b> — [%s]\n", html.EscapeString(titleName), html.EscapeString(res))
+		sb.WriteString(fmt.Sprintf("\n🔗 <a href=\"%s\">Open Library</a>", baseURL))
+		if ispSiteURL != "" {
+			sb.WriteString(fmt.Sprintf(" • 🌐 <a href=\"%s\">Open ISP Media Server</a>", html.EscapeString(ispSiteURL)))
+		}
 
-		// Check item-boundary character threshold (3800)
-		if sb.Len()+len(line) > 3800 {
+		err := n.sendMessageWithKeyboard(sb.String(), replyMarkup)
+		if err != nil {
+			log.Printf("[Notifier] Batch digest chunk failed (%v), falling back to single dispatches", err)
+			for _, id := range chunkIDs {
+				for _, ev := range events {
+					if ev.ID == id {
+						n.sendSingleEvent(ev)
+					}
+				}
+			}
 			break
+		} else {
+			for _, id := range chunkIDs {
+				_, _ = n.database.Exec("UPDATE events SET digest_sent_at = CURRENT_TIMESTAMP, notified_at = CURRENT_TIMESTAMP WHERE id = ?", id)
+			}
 		}
 
-		sb.WriteString(line)
-		addedCount++
-		successIDs = append(successIDs, ev.ID)
-	}
-
-	remaining := len(events) - addedCount
-	if remaining > 0 {
-		sb.WriteString(fmt.Sprintf("\n<i>...and %d more updates</i>\n", remaining))
-	}
-	sb.WriteString(fmt.Sprintf("🔗 <a href=\"%s\">Open Library</a>", n.cfg.PublicBaseURL))
-
-	err := n.sendMessage(sb.String())
-	if err != nil {
-		log.Printf("[Notifier] Batch digest failed (%v), falling back to individual dispatches", err)
-		for _, ev := range events {
-			n.sendSingleEvent(ev)
-		}
-	} else {
-		for _, id := range successIDs {
-			_, _ = n.database.Exec("UPDATE events SET digest_sent_at = CURRENT_TIMESTAMP, notified_at = CURRENT_TIMESTAMP WHERE id = ?", id)
+		if itemIndex < totalEvents {
+			time.Sleep(1 * time.Second)
 		}
 	}
 }
 
 func (n *Notifier) sendMessage(text string) error {
+	return n.sendMessageWithKeyboard(text, nil)
+}
+
+func (n *Notifier) sendMessageWithKeyboard(text string, replyMarkup interface{}) error {
 	apiURL := fmt.Sprintf("https://api.telegram.org/bot%s/sendMessage", n.cfg.TelegramBotToken)
-	body, _ := json.Marshal(map[string]interface{}{
+	payload := map[string]interface{}{
 		"chat_id":    n.cfg.TelegramAdminChatID,
 		"text":       text,
 		"parse_mode": "HTML",
-	})
+	}
+	if replyMarkup != nil {
+		payload["reply_markup"] = replyMarkup
+	}
+	body, _ := json.Marshal(payload)
 
 	resp, err := n.client.Post(apiURL, "application/json", bytes.NewReader(body))
 	if err != nil {
@@ -335,9 +423,13 @@ func (n *Notifier) sendMessage(text string) error {
 }
 
 func (n *Notifier) sendPhoto(imagePath, caption string) error {
+	return n.sendPhotoWithKeyboard(imagePath, caption, nil)
+}
+
+func (n *Notifier) sendPhotoWithKeyboard(imagePath, caption string, replyMarkup interface{}) error {
 	file, err := os.Open(imagePath)
 	if err != nil {
-		return n.sendMessage(caption)
+		return n.sendMessageWithKeyboard(caption, replyMarkup)
 	}
 	defer file.Close()
 
@@ -347,6 +439,10 @@ func (n *Notifier) sendPhoto(imagePath, caption string) error {
 	_ = w.WriteField("chat_id", strconv.FormatInt(n.cfg.TelegramAdminChatID, 10))
 	_ = w.WriteField("caption", caption)
 	_ = w.WriteField("parse_mode", "HTML")
+	if replyMarkup != nil {
+		rmBytes, _ := json.Marshal(replyMarkup)
+		_ = w.WriteField("reply_markup", string(rmBytes))
+	}
 
 	part, err := w.CreateFormFile("photo", "poster.jpg")
 	if err != nil {

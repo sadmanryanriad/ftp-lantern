@@ -596,7 +596,7 @@ func (c *Crawler) ingestFiles(titleID, releaseID int64, seasonNum int, files []D
 }
 
 func (c *Crawler) crawlHotSet() {
-	// Check followed series first, and recent releases from last 14 days (up to 50 hot series for rapid sub-2s incremental check)
+	// Check followed series first, and recent releases from last 45 days (up to 50 hot series for rapid sub-2s incremental check)
 	query := `
 		SELECT t.id, r.id, r.folder_url, r.folder_name, r.category
 		FROM titles t
@@ -604,7 +604,7 @@ func (c *Crawler) crawlHotSet() {
 		WHERE t.type = 'series' AND r.gone_at IS NULL AND (
 			t.is_following = 1 OR (
 				SELECT MAX(f.last_modified) FROM files f WHERE f.release_id = r.id AND f.gone_at IS NULL
-			) > datetime('now', '-14 days')
+			) > datetime('now', '-45 days')
 		)
 		ORDER BY t.is_following DESC, r.last_modified DESC
 		LIMIT 50
@@ -646,17 +646,27 @@ func (c *Crawler) crawlHotSet() {
 		c.statsLock.Unlock()
 		c.foldersIndexedSession.Add(1)
 
-		// Re-list folder contents to scan seasons
+		// Re-list folder contents to scan seasons or flat episode files
 		contents, err := c.FetchDir(it.folderURL)
 		if err != nil {
 			continue
 		}
 
+		hasSeasonDirs := false
 		for _, item := range contents {
 			if item.IsDir {
+				hasSeasonDirs = true
 				seasonNum := parser.ParseSeasonNumber(item.Name)
 				c.crawlSeasonFolder(it.titleID, it.releaseID, seasonNum, item)
 			}
+		}
+
+		// Support series with flat files directly in title folder
+		if !hasSeasonDirs && len(contents) > 0 {
+			c.crawlSeasonFolder(it.titleID, it.releaseID, 1, DirItem{
+				Name: "Season 1",
+				URL:  it.folderURL,
+			})
 		}
 	}
 }

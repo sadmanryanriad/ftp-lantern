@@ -523,6 +523,7 @@ type EpisodeInfo struct {
 
 type TitleDetails struct {
 	TitleCard
+	FolderURL   string        `json:"folder_url,omitempty"`
 	Episodes    []EpisodeInfo `json:"episodes"`
 	Files       []EpisodeInfo `json:"files"`
 	LastPlayed  string        `json:"last_played_code"`
@@ -540,6 +541,10 @@ func (s *Server) handleTitleDetails(w http.ResponseWriter, r *http.Request) {
 	}
 
 	details := TitleDetails{TitleCard: cards[0]}
+
+	var folderURL string
+	_ = s.database.QueryRow("SELECT folder_url FROM releases WHERE title_id = ? AND gone_at IS NULL ORDER BY id ASC LIMIT 1", id).Scan(&folderURL)
+	details.FolderURL = folderURL
 
 	// Fetch files
 	filesQuery := `
@@ -569,6 +574,7 @@ func (s *Server) handleTitleDetails(w http.ResponseWriter, r *http.Request) {
 			details.Episodes = append(details.Episodes, ep)
 		}
 	}
+	details.Files = details.Episodes
 
 	// Fetch last played
 	var lastFileID int64

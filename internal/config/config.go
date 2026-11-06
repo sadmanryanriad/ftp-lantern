@@ -25,6 +25,10 @@ func Load() *Config {
 	dataDir := getEnv("DATA_DIR", "/data")
 	thumbsDir := getEnv("THUMBS_DIR", dataDir+"/thumbs")
 	publicBaseURL := getEnv("PUBLIC_BASE_URL", "http://localhost:"+port)
+	if port != "8085" && strings.Contains(publicBaseURL, ":8085") {
+		publicBaseURL = strings.Replace(publicBaseURL, ":8085", ":"+port, 1)
+	}
+	publicBaseURL = strings.TrimRight(publicBaseURL, "/")
 
 	maxThumbsMB, _ := strconv.Atoi(getEnv("MAX_THUMBS_MB", "250"))
 	if maxThumbsMB <= 0 {

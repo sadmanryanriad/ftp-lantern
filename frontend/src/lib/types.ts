@@ -24,6 +24,7 @@ export interface Title {
   next_episode_code?: string;
   next_episode_name?: string;
   next_episode_url?: string;
+  folder_url?: string;
 }
 
 export interface Release {

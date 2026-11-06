@@ -45,6 +45,7 @@
 
   let activeSeason = $state<number>(1);
   let copiedFileId = $state<number | null>(null);
+  let copiedIspFileId = $state<number | null>(null);
   let copiedCliFileId = $state<number | null>(null);
   let mpvLaunchedFileId = $state<number | null>(null);
   let isFollowing = $state<boolean>(false);
@@ -156,6 +157,15 @@
         if (copiedCliFileId === file.id) copiedCliFileId = null;
       }, 2000);
     }
+  }
+
+  async function openISPSite(file: MediaFile) {
+    await copyToClipboard(file.file_url);
+    window.open(file.file_url, '_blank', 'noopener,noreferrer');
+    copiedIspFileId = file.id;
+    setTimeout(() => {
+      if (copiedIspFileId === file.id) copiedIspFileId = null;
+    }, 2000);
   }
 
   function handlePlayMPV(file: MediaFile) {
@@ -271,6 +281,21 @@
                 <Star class="w-3.5 h-3.5 {isFollowing ? 'fill-current text-amber-400' : ''}" />
                 <span>{isFollowing ? 'Following (Instant Alerts)' : 'Follow for Instant Alerts'}</span>
               </button>
+
+              <!-- Direct ISP Folder Link -->
+              {#if title.folder_url}
+                <a
+                  href={title.folder_url}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  onclick={() => copyToClipboard(title.folder_url!)}
+                  class="inline-flex items-center gap-2 px-3.5 py-2 rounded-xl bg-zinc-800/80 hover:bg-zinc-750 text-zinc-300 hover:text-amber-300 border border-zinc-700 text-xs font-semibold transition-colors shadow-sm"
+                  title="Open directory directly on ISP Server (and copy folder URL)"
+                >
+                  <ExternalLink class="w-3.5 h-3.5 text-amber-400" />
+                  <span>ISP Directory</span>
+                </a>
+              {/if}
             </div>
           </div>
         </div>
@@ -371,6 +396,21 @@
                     <Copy class="w-4 h-4" />
                   {/if}
                 </button>
+
+                <!-- Open / Copy directly on ISP Media Server -->
+                <button
+                  type="button"
+                  onclick={() => openISPSite(ep)}
+                  class="min-h-[42px] min-w-[42px] flex items-center justify-center rounded-xl border active:scale-95 transition-all {copiedIspFileId === ep.id ? 'text-emerald-400 border-emerald-500/40 bg-emerald-500/10' : 'bg-zinc-800 hover:bg-zinc-700 text-zinc-300 hover:text-amber-300 border-zinc-700'}"
+                  title="Open directly on ISP Media Server (copies link)"
+                  aria-label="Open on ISP Media Server"
+                >
+                  {#if copiedIspFileId === ep.id}
+                    <Check class="w-4 h-4 text-emerald-400" />
+                  {:else}
+                    <ExternalLink class="w-4 h-4 text-amber-400" />
+                  {/if}
+                </button>
               </div>
 
               <!-- DESKTOP ACTION BAR: Shown on PC / larger screens (hidden sm:flex). Complete desktop player suite -->
@@ -435,6 +475,25 @@
                     <Check class="w-3.5 h-3.5 text-emerald-400" />
                   {:else}
                     <Copy class="w-3.5 h-3.5" />
+                  {/if}
+                </button>
+
+                <!-- Open / Copy directly on ISP Media Server -->
+                <button
+                  type="button"
+                  onclick={() => openISPSite(ep)}
+                  class="inline-flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg border transition-colors {copiedIspFileId === ep.id
+                    ? 'text-emerald-400 border-emerald-500/40 bg-emerald-500/10'
+                    : 'bg-zinc-850 hover:bg-zinc-800 text-zinc-300 hover:text-amber-300 border-zinc-800'}"
+                  title="Open directly on ISP site (also copies stream URL)"
+                  aria-label="Open directly on ISP site"
+                >
+                  {#if copiedIspFileId === ep.id}
+                    <Check class="w-3.5 h-3.5 text-emerald-400" />
+                    <span>Opening...</span>
+                  {:else}
+                    <ExternalLink class="w-3.5 h-3.5 text-amber-400" />
+                    <span>ISP</span>
                   {/if}
                 </button>
 
