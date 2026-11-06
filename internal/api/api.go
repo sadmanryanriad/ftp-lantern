@@ -182,6 +182,7 @@ func (s *Server) RegisterRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("POST /api/settings/notifications", s.handleSetNotificationMode)
 	mux.HandleFunc("POST /api/crawl/trigger", s.handleTriggerCrawl)
 	mux.HandleFunc("GET /api/status", s.handleStatus)
+	mux.HandleFunc("GET /api/mpv-setup.bat", s.handleMPVSetupScript)
 }
 
 type TitleCard struct {
@@ -1125,4 +1126,76 @@ func formatBytes(b int64) string {
 		exp++
 	}
 	return fmt.Sprintf("%.1f %cB", float64(b)/float64(div), "KMGTPE"[exp])
+}
+
+func (s *Server) handleMPVSetupScript(w http.ResponseWriter, r *http.Request) {
+	script := `@echo off
+setlocal enabledelayedexpansion
+title FTP-Lantern - MPV 1-Click Setup
+
+echo ========================================================
+echo   FTP-Lantern - Enable MPV 1-Click Launch on Windows
+echo ========================================================
+echo.
+
+set "MPV_PATH="
+where mpv.exe >nul 2>&1
+if !errorlevel! equ 0 (
+    for /f "delims=" %%i in ('where mpv.exe') do (
+        if not defined MPV_PATH set "MPV_PATH=%%i"
+    )
+)
+
+if not defined MPV_PATH if exist "%LOCALAPPDATA%\Programs\mpv\mpv.exe" set "MPV_PATH=%LOCALAPPDATA%\Programs\mpv\mpv.exe"
+if not defined MPV_PATH if exist "%LOCALAPPDATA%\mpv\mpv.exe" set "MPV_PATH=%LOCALAPPDATA%\mpv\mpv.exe"
+if not defined MPV_PATH if exist "C:\Program Files\mpv\mpv.exe" set "MPV_PATH=C:\Program Files\mpv\mpv.exe"
+if not defined MPV_PATH if exist "C:\mpv\mpv.exe" set "MPV_PATH=C:\mpv\mpv.exe"
+if not defined MPV_PATH if exist "D:\mpv\mpv.exe" set "MPV_PATH=D:\mpv\mpv.exe"
+if not defined MPV_PATH if exist "%USERPROFILE%\scoop\shims\mpv.exe" set "MPV_PATH=%USERPROFILE%\scoop\shims\mpv.exe"
+if not defined MPV_PATH if exist "%USERPROFILE%\scoop\apps\mpv\current\mpv.exe" set "MPV_PATH=%USERPROFILE%\scoop\apps\mpv\current\mpv.exe"
+
+if not defined MPV_PATH (
+    echo [!] Could not locate mpv.exe automatically in standard folders.
+    echo Please drag and drop your mpv.exe file here, or type its full path:
+    set /p "MPV_PATH=Path: "
+    set "MPV_PATH=!MPV_PATH:"=!"
+)
+
+if not exist "!MPV_PATH!" (
+    echo.
+    echo [ERROR] The file "!MPV_PATH!" does not exist.
+    echo Setup aborted.
+    pause
+    exit /b 1
+)
+
+echo.
+echo Found MPV at: "!MPV_PATH!"
+echo Registering mpv:// protocol in Windows Registry (HKCU)...
+
+reg add "HKCU\Software\Classes\mpv" /ve /t REG_SZ /d "URL:mpv Protocol" /f >nul
+reg add "HKCU\Software\Classes\mpv" /v "URL Protocol" /t REG_SZ /d "" /f >nul
+reg add "HKCU\Software\Classes\mpv\shell\open\command" /ve /t REG_SZ /d "powershell.exe -WindowStyle Hidden -Command \"$u = '%%1' -replace '^mpv://',''; Start-Process '!MPV_PATH!' -ArgumentList ('\\\"' + $u + '\\\"')\"" /f >nul
+
+if !errorlevel! equ 0 (
+    echo.
+    echo ========================================================
+    echo   SUCCESS! mpv:// protocol registered successfully.
+    echo.
+    echo   Now when you click 'MPV' in FTP-Lantern:
+    echo   1. Chrome will ask: 'Open mpv.exe?'
+    echo   2. Check 'Always allow' and click Open.
+    echo   3. MPV will open and stream directly!
+    echo ========================================================
+) else (
+    echo.
+    echo [ERROR] Failed to write to registry.
+)
+
+echo.
+pause
+`
+	w.Header().Set("Content-Type", "application/x-bat")
+	w.Header().Set("Content-Disposition", "attachment; filename=\"enable-mpv-1click.bat\"")
+	w.Write([]byte(script))
 }
