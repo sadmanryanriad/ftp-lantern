@@ -114,17 +114,135 @@ Tapping any episode's play button triggers an Android `intent://` URI. Android w
 
 ---
 
+## 📡 External Search API (Homelab & Telegram Bot Integration)
+
+FTP-Lantern exposes a high-performance, low-latency Search API designed to be accessed locally from anywhere across your homelab network (e.g. from your central **Homelab Dashboard**, custom scripts, or external bots).
+
+> [!NOTE]
+> **Homelab Bot Architecture:** If your homelab already owns and manages the primary Telegram bot, you do not need FTP-Lantern to manage inbound commands. Your homelab bot can simply query this API locally to provide `/search <query>` or interactive inline media search directly within Telegram.
+
+### Endpoints
+- `GET /api/search`
+- `GET /api/v1/search` (versioned alias)
+
+CORS is globally enabled (`Access-Control-Allow-Origin: *`), allowing direct browser-based calls from any web dashboard or cross-origin app.
+
+### Query Parameters
+
+| Parameter | Type | Default | Description |
+| :--- | :--- | :--- | :--- |
+| `q` | string | *none* | Search keyword (accelerated by SQLite FTS5 trigram + Levenshtein typo fallback) |
+| `limit` | integer | `30` | Number of items to return (1 – 100) |
+| `page` | integer | `1` | Pagination page number |
+| `type` | string | `all` | Filter by type: `movie`, `series`, or `all` |
+| `resolution` | string | *all* | Filter by resolution: `1080p`, `720p`, `4K` |
+| `category` | string | *all* | Match specific category / folder string |
+| `year` | string | *all* | Specific year (`2024`), range (`2020-2024`), or older (`<2010`) |
+| `include_files`| boolean| `false` | When `true` (or `1`), embeds all media files & streaming URLs in the response |
+
+### Response Schema
+
+```json
+{
+  "query": "dexter",
+  "total": 4,
+  "page": 1,
+  "limit": 2,
+  "results": [
+    {
+      "id": 478,
+      "name": "Dexter",
+      "year": 2006,
+      "type": "series",
+      "resolution": "1080p",
+      "source": "Unknown",
+      "has_hdr": false,
+      "category": "TV Series ♥  A  —  L",
+      "size_bytes": 86651417600,
+      "size_human": "80.7 GB",
+      "poster_url": "http://172.16.50.12/DHAKA-FLIX-12/.../Cover1.jpg",
+      "thumb_url": "/api/thumbs/478-62e12226.jpg",
+      "thumb_full_url": "http://192.168.0.134:8087/api/thumbs/478-62e12226.jpg",
+      "folder_url": "http://172.16.50.12/DHAKA-FLIX-12/TV-WEB-Series/TV%20Series%20%E2%99%A5%20%20A%20%20%E2%80%94%20%20L/Dexter%20%28TV%20Series%202006%E2%80%932013%29%201080p/",
+      "web_url": "http://192.168.0.134:8087/#/title/478",
+      "is_following": false,
+      "files": [
+        {
+          "id": 14201,
+          "season_number": 1,
+          "episode_number": 1,
+          "episode_code": "S01E01",
+          "name": "Dexter.S01E01.1080p.mkv",
+          "file_url": "http://172.16.50.12/DHAKA-FLIX-12/.../Dexter.S01E01.1080p.mkv",
+          "intent_url": "intent://172.16.50.12/...#Intent;type=video/*;end",
+          "size_bytes": 1423456789,
+          "size_human": "1.3 GB",
+          "resolution": "1080p",
+          "source": "WEBRip",
+          "has_hdr": false
+        }
+      ]
+    }
+  ]
+}
+```
+
+### Homelab Dashboard & Telegram Bot Integration Examples
+
+#### 1. Quick Local Search (cURL)
+```bash
+curl -s "http://192.168.0.134:8087/api/v1/search?q=severance&limit=5" | jq
+```
+
+#### 2. Telegram Bot Search Extension (Python)
+If your central homelab bot handles Telegram updates:
+```python
+import requests
+
+def handle_telegram_search(query: str, chat_id: int):
+    # Query FTP-Lantern Search API locally
+    res = requests.get(
+        "http://192.168.0.134:8087/api/v1/search",
+        params={"q": query, "limit": 5}
+    ).json()
+    
+    if not res["results"]:
+        return "No titles found matching your query."
+
+    msg = f"🔍 <b>FTP-Lantern Search Results for '{query}':</b>\n\n"
+    for i, item in enumerate(res["results"], start=1):
+        year_str = f" ({item['year']})" if item['year'] else ""
+        msg += f"{i}. <a href=\"{item['web_url']}\"><b>{item['name']}{year_str}</b></a> — [{item['resolution']}]"
+        if item.get("folder_url"):
+            msg += f" • <a href=\"{item['folder_url']}\">ISP</a>"
+        msg += f" (<i>{item['size_human']}</i>)\n"
+    
+    return msg
+```
+
+#### 3. Homelab Dashboard Integration (Node.js / Express / Next.js)
+```typescript
+// Fetch directly from any microservice or dashboard backend
+export async function searchBDIX(query: string) {
+  const resp = await fetch(`http://192.168.0.134:8087/api/v1/search?q=${encodeURIComponent(query)}&limit=10`);
+  const data = await resp.json();
+  return data.results;
+}
+```
+
+---
+
 ## ⌨️ Dashboard & API Reference
 
 | Endpoint | Method | Description |
 | :--- | :--- | :--- |
-| `/api/search` | `GET` | Instant search & filtering (`q`, `resolution`, `source`, `type`, `limit`) |
+| `/api/search`, `/api/v1/search` | `GET` | Instant search & filtering (`q`, `type`, `category`, `resolution`, `year`, `include_files`, `page`, `limit`) |
 | `/api/titles` | `GET` | Catalog list (`continue_watching=true` returns active watch shelf) |
-| `/api/titles/:id` | `GET` | Detailed title payload with seasons, episode list, and resolution tags |
+| `/api/titles/:id` | `GET` | Detailed title payload with releases, files, streaming URLs, and `web_url` |
 | `/api/titles/:id/follow` | `POST` | Toggle watchlist status |
 | `/api/plays` | `POST` | Record playback event (`file_id`) via `navigator.sendBeacon()` |
 | `/api/plays/mark-watched`| `POST` | Mark episodes watched up to specified `file_id` |
-| `/api/new` | `GET` | Recently indexed additions |
+| `/api/new` | `GET` | Recently indexed additions with `web_url` and `folder_url` |
 | `/api/thumbs/:filename`| `GET` | Content-hashed cached poster thumbnail (`immutable` headers) |
 | `/play/file/:id.m3u` | `GET` | Ephemeral single-file M3U playlist |
 | `/play/season/:id.m3u`| `GET` | Full season M3U playlist file with natural episode ordering |

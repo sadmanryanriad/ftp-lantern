@@ -152,6 +152,7 @@ func (s *Server) startIspHealthChecker() {
 
 func (s *Server) RegisterRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("GET /api/search", s.handleSearch)
+	mux.HandleFunc("GET /api/v1/search", s.handleSearch)
 	mux.HandleFunc("GET /api/titles", s.handleTitles)
 	mux.HandleFunc("GET /api/titles/{id}", s.handleTitleDetails)
 	mux.HandleFunc("POST /api/titles/{id}/follow", s.handleToggleFollow)
@@ -173,19 +174,23 @@ func (s *Server) RegisterRoutes(mux *http.ServeMux) {
 }
 
 type TitleCard struct {
-	ID          int64  `json:"id"`
-	Name        string `json:"name"`
-	Year        int    `json:"year"`
-	Type        string `json:"type"`
-	Resolution  string `json:"resolution"`
-	Source      string `json:"source"`
-	HasHDR      bool   `json:"has_hdr"`
-	PosterURL   string `json:"poster_url"`
-	ThumbURL    string `json:"thumb_url"`
-	IsFollowing bool   `json:"is_following"`
-	Category    string `json:"category"`
-	SizeBytes   int64  `json:"size_bytes"`
-	SizeHuman   string `json:"size_human"`
+	ID           int64         `json:"id"`
+	Name         string        `json:"name"`
+	Year         int           `json:"year"`
+	Type         string        `json:"type"`
+	Resolution   string        `json:"resolution"`
+	Source       string        `json:"source"`
+	HasHDR       bool          `json:"has_hdr"`
+	PosterURL    string        `json:"poster_url"`
+	ThumbURL     string        `json:"thumb_url"`
+	ThumbFullURL string        `json:"thumb_full_url,omitempty"`
+	FolderURL    string        `json:"folder_url,omitempty"`
+	WebURL       string        `json:"web_url,omitempty"`
+	IsFollowing  bool          `json:"is_following"`
+	Category     string        `json:"category"`
+	SizeBytes    int64         `json:"size_bytes"`
+	SizeHuman    string        `json:"size_human"`
+	Files        []EpisodeInfo `json:"files,omitempty"`
 }
 
 type ContinueWatchingItem struct {
@@ -411,11 +416,17 @@ func (s *Server) handleSearch(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
+	includeFiles := r.URL.Query().Get("include_files") == "true" || r.URL.Query().Get("include_files") == "1" || r.URL.Query().Get("files") == "true"
+	if includeFiles && len(results) > 0 {
+		results = s.attachFilesToCards(results)
+	}
+
 	if results == nil {
 		results = []TitleCard{}
 	}
 
 	writeJSON(w, map[string]interface{}{
+		"query":   query,
 		"results": results,
 		"total":   totalCount,
 		"page":    page,
@@ -464,7 +475,8 @@ func (s *Server) fetchTitlesByIDs(ids []int64) []TitleCard {
 		       COALESCE(MAX(r.source), 'Unknown') as source,
 		       COALESCE(MAX(r.has_hdr), 0) as has_hdr,
 		       COALESCE(MAX(r.category), '') as category,
-		       COALESCE((SELECT SUM(f.file_size_bytes) FROM files f WHERE f.title_id = t.id AND f.gone_at IS NULL), 0) as size_bytes
+		       COALESCE((SELECT SUM(f.file_size_bytes) FROM files f WHERE f.title_id = t.id AND f.gone_at IS NULL), 0) as size_bytes,
+		       COALESCE(MAX(r.folder_url), '') as folder_url
 		FROM titles t
 		LEFT JOIN releases r ON r.title_id = t.id AND r.gone_at IS NULL
 		WHERE t.id IN (%s)
@@ -482,13 +494,21 @@ func (s *Server) fetchTitlesByIDs(ids []int64) []TitleCard {
 		var tc TitleCard
 		var thumbHash string
 		var hasHDRInt int
-		_ = rows.Scan(&tc.ID, &tc.Name, &tc.Year, &tc.Type, &tc.PosterURL, &thumbHash, &tc.IsFollowing, &tc.Resolution, &tc.Source, &hasHDRInt, &tc.Category, &tc.SizeBytes)
+		var folderURL string
+		_ = rows.Scan(&tc.ID, &tc.Name, &tc.Year, &tc.Type, &tc.PosterURL, &thumbHash, &tc.IsFollowing, &tc.Resolution, &tc.Source, &hasHDRInt, &tc.Category, &tc.SizeBytes, &folderURL)
 		tc.HasHDR = (hasHDRInt == 1)
+		tc.FolderURL = folderURL
+		if tc.ID > 0 && s.cfg != nil && s.cfg.PublicBaseURL != "" {
+			tc.WebURL = fmt.Sprintf("%s/#/title/%d", s.cfg.PublicBaseURL, tc.ID)
+		}
 		if tc.SizeBytes > 0 {
 			tc.SizeHuman = formatBytes(tc.SizeBytes)
 		}
 		if thumbHash != "" {
 			tc.ThumbURL = fmt.Sprintf("/api/thumbs/%d-%s.jpg", tc.ID, thumbHash)
+			if s.cfg != nil && s.cfg.PublicBaseURL != "" {
+				tc.ThumbFullURL = fmt.Sprintf("%s%s", s.cfg.PublicBaseURL, tc.ThumbURL)
+			}
 		}
 		cards = append(cards, tc)
 	}
@@ -502,6 +522,61 @@ func (s *Server) fetchTitlesByIDs(ids []int64) []TitleCard {
 		return idOrder[cards[i].ID] < idOrder[cards[j].ID]
 	})
 
+	return cards
+}
+
+func (s *Server) attachFilesToCards(cards []TitleCard) []TitleCard {
+	if len(cards) == 0 {
+		return cards
+	}
+	titleIDs := make([]int64, len(cards))
+	cardMap := make(map[int64]*TitleCard, len(cards))
+	for i := range cards {
+		titleIDs[i] = cards[i].ID
+		cardMap[cards[i].ID] = &cards[i]
+	}
+
+	placeholders := make([]string, len(titleIDs))
+	args := make([]interface{}, len(titleIDs))
+	for i, id := range titleIDs {
+		placeholders[i] = "?"
+		args[i] = id
+	}
+
+	query := fmt.Sprintf(`
+		SELECT id, title_id, season_number, episode_number, episode_code, name, file_url, file_size_bytes, resolution, source, has_hdr
+		FROM files
+		WHERE title_id IN (%s) AND gone_at IS NULL
+		ORDER BY season_number ASC, episode_number ASC, name ASC
+	`, strings.Join(placeholders, ","))
+
+	rows, err := s.database.Query(query, args...)
+	if err != nil {
+		return cards
+	}
+	defer rows.Close()
+
+	for rows.Next() {
+		var ep EpisodeInfo
+		var titleID int64
+		var sNum, epNum *int
+		var hasHDRInt int
+		if err := rows.Scan(&ep.ID, &titleID, &sNum, &epNum, &ep.EpisodeCode, &ep.Name, &ep.FileURL, &ep.SizeBytes, &ep.Resolution, &ep.Source, &hasHDRInt); err == nil {
+			if sNum != nil {
+				ep.SeasonNumber = *sNum
+			}
+			if epNum != nil {
+				ep.EpNumber = *epNum
+			}
+			ep.HasHDR = (hasHDRInt == 1)
+			ep.IntentURL = player.BuildAndroidIntent(ep.FileURL)
+			ep.FileSizeBytes = ep.SizeBytes
+			ep.SizeHuman = formatBytes(ep.SizeBytes)
+			if card, ok := cardMap[titleID]; ok {
+				card.Files = append(card.Files, ep)
+			}
+		}
+	}
 	return cards
 }
 
@@ -523,7 +598,6 @@ type EpisodeInfo struct {
 
 type TitleDetails struct {
 	TitleCard
-	FolderURL   string        `json:"folder_url,omitempty"`
 	Episodes    []EpisodeInfo `json:"episodes"`
 	Files       []EpisodeInfo `json:"files"`
 	LastPlayed  string        `json:"last_played_code"`
@@ -631,7 +705,8 @@ func (s *Server) handleWhatsNew(w http.ResponseWriter, r *http.Request) {
 		SELECT t.id, t.name, t.year, t.type, COALESCE(t.poster_url, ''), COALESCE(t.thumb_hash, ''),
 		       COALESCE(MAX(r.resolution), 'Unknown'), COALESCE(MAX(r.source), 'Unknown'),
 		       COALESCE(MAX(r.has_hdr), 0), COALESCE(MAX(r.category), ''),
-		       COALESCE((SELECT SUM(f.file_size_bytes) FROM files f WHERE f.title_id = t.id AND f.gone_at IS NULL), 0) as size_bytes
+		       COALESCE((SELECT SUM(f.file_size_bytes) FROM files f WHERE f.title_id = t.id AND f.gone_at IS NULL), 0) as size_bytes,
+		       COALESCE(MAX(r.folder_url), '')
 		FROM titles t
 		JOIN releases r ON r.title_id = t.id AND r.gone_at IS NULL
 		GROUP BY t.id
@@ -649,13 +724,21 @@ func (s *Server) handleWhatsNew(w http.ResponseWriter, r *http.Request) {
 		var tc TitleCard
 		var thumbHash string
 		var hasHDRInt int
-		_ = rows.Scan(&tc.ID, &tc.Name, &tc.Year, &tc.Type, &tc.PosterURL, &thumbHash, &tc.Resolution, &tc.Source, &hasHDRInt, &tc.Category, &tc.SizeBytes)
+		var folderURL string
+		_ = rows.Scan(&tc.ID, &tc.Name, &tc.Year, &tc.Type, &tc.PosterURL, &thumbHash, &tc.Resolution, &tc.Source, &hasHDRInt, &tc.Category, &tc.SizeBytes, &folderURL)
 		tc.HasHDR = (hasHDRInt == 1)
+		tc.FolderURL = folderURL
+		if tc.ID > 0 && s.cfg != nil && s.cfg.PublicBaseURL != "" {
+			tc.WebURL = fmt.Sprintf("%s/#/title/%d", s.cfg.PublicBaseURL, tc.ID)
+		}
 		if tc.SizeBytes > 0 {
 			tc.SizeHuman = formatBytes(tc.SizeBytes)
 		}
 		if thumbHash != "" {
 			tc.ThumbURL = fmt.Sprintf("/api/thumbs/%d-%s.jpg", tc.ID, thumbHash)
+			if s.cfg != nil && s.cfg.PublicBaseURL != "" {
+				tc.ThumbFullURL = fmt.Sprintf("%s%s", s.cfg.PublicBaseURL, tc.ThumbURL)
+			}
 		}
 		results = append(results, tc)
 	}

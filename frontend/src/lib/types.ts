@@ -25,6 +25,8 @@ export interface Title {
   next_episode_name?: string;
   next_episode_url?: string;
   folder_url?: string;
+  web_url?: string;
+  thumb_full_url?: string;
 }
 
 export interface Release {

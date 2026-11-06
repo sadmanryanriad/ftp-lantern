@@ -318,11 +318,11 @@ END;
 
 | Endpoint | Method | Description |
 | :--- | :--- | :--- |
-| `/api/search` | `GET` | Instant search & filtering (`q`, `type`, `category`, `resolution`, `year`, `date_added`, `sort`, `page`, `limit`) |
-| `/api/titles` | `GET` | Paginated library titles |
-| `/api/titles/:id` | `GET` | Detailed title payload with releases, files, and stream URLs |
+| `/api/search`, `/api/v1/search` | `GET` | Instant search & filtering (`q`, `type`, `category`, `resolution`, `year`, `date_added`, `sort`, `include_files`, `page`, `limit`) |
+| `/api/titles` | `GET` | Paginated library titles (`continue_watching=true` returns active watch shelf) |
+| `/api/titles/:id` | `GET` | Detailed title payload with releases, files, streaming URLs, `folder_url`, and `web_url` |
 | `/api/titles/:id/follow` | `POST` | Toggle watchlist follow status (⭐) |
-| `/api/new` | `GET` | Feed of recently indexed content (`since`, `limit`) |
+| `/api/new` | `GET` | Feed of recently indexed content (`since`, `limit`) with `web_url` and `folder_url` |
 | `/api/thumbs/:filename` | `GET` | Content-hashed poster thumbnail with `Cache-Control: immutable` |
 | `/play/file/:id.m3u` | `GET` | Ephemeral single-file M3U playlist file |
 | `/play/season/:id.m3u` | `GET` | Full season M3U playlist file with natural episode ordering |
@@ -332,6 +332,33 @@ END;
 | `/api/crawl/trigger` | `POST` | Immediate manual crawl execution (non-blocking `TryLock`) |
 | `/api/backup` | `POST` | Generates a non-locking SQLite snapshot via `VACUUM INTO` |
 | `/api/status` | `GET` | Health status: ISP reachability, item counts, memory, and disk usage |
+
+### 9.1 External Integration Architecture (Homelab Dashboard & Telegram Bot Extension)
+
+FTP-Lantern is designed as an independent microservice within a larger homelab ecosystem. In homelab setups where a central dashboard (e.g. `home.bakeartbd.com`) or a primary management bot already controls Telegram interactions:
+
+- **Decoupled Bot Model:** FTP-Lantern handles high-performance indexing, metadata enrichment, poster caching, and stream link resolution. It does not need to own inbound Telegram polling when an upstream bot exists.
+- **Local Network Querying:** Upstream services or bots query `http://<host>:8087/api/v1/search?q=<query>&limit=5` directly over the host network or internal bridge.
+- **Universal CORS:** Requests from any local or external frontend (e.g., custom web dashboards) are permitted via `Access-Control-Allow-Origin: *`.
+- **Enriched Links:** Search results return both `web_url` (deep link into FTP-Lantern title view) and `folder_url` (direct link to the ISP media server), along with `thumb_full_url` for immediate Telegram photo previews.
+- **Atomic Single-Hop Retrieval:** Supplying `include_files=true` (or `1`) embeds the complete file/stream array into the search response, eliminating N+1 queries.
+
+```
+┌────────────────────────────────────────────────────────┐
+│             Central Homelab Dashboard / Bot            │
+│                 (Owns Telegram Session)                │
+└───────────────────────────┬────────────────────────────┘
+                            │
+               GET /api/v1/search?q=query
+                            │
+                            ▼
+┌────────────────────────────────────────────────────────┐
+│                  FTP-Lantern Microservice              │
+│       - SQLite Trigram FTS5 + Typo Tolerant Index      │
+│       - Direct stream link & folder_url resolver       │
+│       - Returns web_url, folder_url, thumb_full_url   │
+└────────────────────────────────────────────────────────┘
+```
 
 ---
 

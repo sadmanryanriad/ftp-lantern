@@ -215,3 +215,74 @@ func TestSearchMoviesAndSeries(t *testing.T) {
 		t.Fatalf("expected at least 1 series, got: %+v", dataS)
 	}
 }
+
+func TestSearchAPIEnhancementsAndFiles(t *testing.T) {
+	srv, mux, database := setupTestServer(t)
+	defer database.Close()
+	srv.cfg.PublicBaseURL = "http://192.168.0.134:8087"
+
+	// Seed Title with release and files
+	res, err := database.Exec(`INSERT INTO titles (name, name_norm, year, type, thumb_hash) VALUES ('Dexter', 'dexter', 2006, 'series', 'abc12345')`)
+	if err != nil {
+		t.Fatal(err)
+	}
+	titleID, _ := res.LastInsertId()
+
+	resRel, err := database.Exec(`INSERT INTO releases (title_id, category, folder_url, folder_name, resolution) VALUES (?, 'TV', 'http://172.16.50.12/dexter/', 'Dexter', '1080p')`, titleID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	relID, _ := resRel.LastInsertId()
+
+	_, err = database.Exec(`INSERT INTO files (release_id, title_id, season_number, episode_number, episode_code, name, file_url, file_size_bytes, resolution) VALUES (?, ?, 1, 1, 'S01E01', 'Ep1.mkv', 'http://172.16.50.12/dexter/1.mkv', 1048576, '1080p')`, relID, titleID)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	// 1. Test /api/v1/search endpoint with include_files=true
+	req := httptest.NewRequest("GET", "/api/v1/search?q=dexter&include_files=true", nil)
+	rec := httptest.NewRecorder()
+	mux.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("expected 200 OK, got %d", rec.Code)
+	}
+
+	type SearchResponse struct {
+		Query   string      `json:"query"`
+		Total   int         `json:"total"`
+		Results []TitleCard `json:"results"`
+	}
+
+	var resp SearchResponse
+	if err := json.NewDecoder(rec.Body).Decode(&resp); err != nil {
+		t.Fatalf("failed to decode json: %v", err)
+	}
+
+	if resp.Total != 1 || len(resp.Results) != 1 {
+		t.Fatalf("expected 1 result, got %d", len(resp.Results))
+	}
+
+	item := resp.Results[0]
+	if item.Name != "Dexter" {
+		t.Errorf("expected name Dexter, got %s", item.Name)
+	}
+	if item.FolderURL != "http://172.16.50.12/dexter/" {
+		t.Errorf("expected folder_url http://172.16.50.12/dexter/, got %s", item.FolderURL)
+	}
+	if item.WebURL != "http://192.168.0.134:8087/#/title/1" {
+		t.Errorf("expected web_url http://192.168.0.134:8087/#/title/1, got %s", item.WebURL)
+	}
+	if item.ThumbFullURL != "http://192.168.0.134:8087/api/thumbs/1-abc12345.jpg" {
+		t.Errorf("expected thumb_full_url http://192.168.0.134:8087/api/thumbs/1-abc12345.jpg, got %s", item.ThumbFullURL)
+	}
+	if len(item.Files) != 1 {
+		t.Fatalf("expected 1 file in files array, got %d", len(item.Files))
+	}
+	if item.Files[0].EpisodeCode != "S01E01" {
+		t.Errorf("expected episode code S01E01, got %s", item.Files[0].EpisodeCode)
+	}
+	if item.Files[0].FileURL != "http://172.16.50.12/dexter/1.mkv" {
+		t.Errorf("expected file_url http://172.16.50.12/dexter/1.mkv, got %s", item.Files[0].FileURL)
+	}
+}
