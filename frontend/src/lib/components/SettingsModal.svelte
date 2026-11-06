@@ -16,7 +16,9 @@
     Bell,
     UploadCloud,
     DownloadCloud,
-    Radio
+    Radio,
+    Monitor,
+    Download
   } from '@lucide/svelte';
   import type { SystemStatus, SchedulerStatus } from '../types';
   import {
@@ -400,6 +402,31 @@
           {#if importFeedback}
             <div class="mt-2 text-[10px] font-mono text-amber-300">{importFeedback}</div>
           {/if}
+        </div>
+
+        <!-- Desktop Player Integration (MPV Windows 1-Click Setup) -->
+        <div class="p-4 rounded-xl bg-zinc-950/70 border border-zinc-800">
+          <div class="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+            <div>
+              <div class="flex items-center gap-2">
+                <Monitor class="w-4 h-4 text-amber-400" />
+                <h3 class="text-sm font-semibold text-zinc-200">MPV Windows 1-Click Setup</h3>
+              </div>
+              <p class="text-xs text-zinc-400 mt-1">
+                One-time helper script to register the <code class="text-amber-300">mpv://</code> protocol in Windows. Enables instant 1-click direct streaming into MPV player without downloading files.
+              </p>
+            </div>
+
+            <a
+              href="/api/mpv-setup.bat"
+              download="enable-mpv-1click.bat"
+              class="inline-flex items-center justify-center gap-2 px-3.5 py-2 rounded-xl bg-zinc-850 hover:bg-zinc-800 text-amber-300 hover:text-amber-200 border border-zinc-700 text-xs font-semibold transition-colors flex-shrink-0"
+              title="Download enable-mpv-1click.bat"
+            >
+              <Download class="w-3.5 h-3.5 text-amber-400" />
+              <span>Download Setup (.bat)</span>
+            </a>
+          </div>
         </div>
 
         <!-- Crawl Rhythm / Automation Mode Selector (UX Cards) -->

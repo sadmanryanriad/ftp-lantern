@@ -340,17 +340,6 @@
                   <span>ISP Directory</span>
                 </a>
               {/if}
-
-              <!-- MPV 1-Click Setup Helper (.bat) -->
-              <a
-                href="/api/mpv-setup.bat"
-                download="enable-mpv-1click.bat"
-                class="hidden sm:inline-flex items-center gap-1.5 px-3 py-2 rounded-xl bg-zinc-800/80 hover:bg-zinc-750 text-zinc-400 hover:text-amber-300 border border-zinc-700 text-xs font-semibold transition-colors shadow-sm"
-                title="First time using MPV 1-click? Download this tiny script to register mpv:// in Windows so clicking MPV launches directly without downloading files"
-              >
-                <Download class="w-3.5 h-3.5 text-amber-400" />
-                <span>MPV 1-Click Setup (.bat)</span>
-              </a>
             </div>
           </div>
         </div>
