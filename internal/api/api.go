@@ -1171,11 +1171,26 @@ if not exist "!MPV_PATH!" (
 
 echo.
 echo Found MPV at: "!MPV_PATH!"
+echo Creating zero-flicker launcher in %%LOCALAPPDATA%%\FTP-Lantern...
+
+set "APP_DIR=%LOCALAPPDATA%\FTP-Lantern"
+if not exist "!APP_DIR!" mkdir "!APP_DIR!"
+
+set "VBS_FILE=!APP_DIR!\launch-mpv.vbs"
+(
+echo Set sh = CreateObject^("WScript.Shell"^)
+echo If WScript.Arguments.Count ^> 0 Then
+echo     raw = WScript.Arguments^(0^)
+echo     clean = Replace^(raw, "mpv://", "", 1, 1, 1^)
+echo     sh.Run """!MPV_PATH!"" """ ^& clean ^& """", 1, False
+echo End If
+) > "!VBS_FILE!"
+
 echo Registering mpv:// protocol in Windows Registry (HKCU)...
 
 reg add "HKCU\Software\Classes\mpv" /ve /t REG_SZ /d "URL:mpv Protocol" /f >nul
 reg add "HKCU\Software\Classes\mpv" /v "URL Protocol" /t REG_SZ /d "" /f >nul
-reg add "HKCU\Software\Classes\mpv\shell\open\command" /ve /t REG_SZ /d "powershell.exe -WindowStyle Hidden -Command \"$u = '%%1' -replace '^mpv://',''; Start-Process '!MPV_PATH!' -ArgumentList ('\\\"' + $u + '\\\"')\"" /f >nul
+reg add "HKCU\Software\Classes\mpv\shell\open\command" /ve /t REG_SZ /d "wscript.exe \"!VBS_FILE!\" \"%%1\"" /f >nul
 
 if !errorlevel! equ 0 (
     echo.
@@ -1183,9 +1198,9 @@ if !errorlevel! equ 0 (
     echo   SUCCESS! mpv:// protocol registered successfully.
     echo.
     echo   Now when you click 'MPV' in FTP-Lantern:
-    echo   1. Chrome will ask: 'Open mpv.exe?'
+    echo   1. Chrome will ask: 'Open with mpv?'
     echo   2. Check 'Always allow' and click Open.
-    echo   3. MPV will open and stream directly!
+    echo   3. MPV will open instantly with zero delay!
     echo ========================================================
 ) else (
     echo.
