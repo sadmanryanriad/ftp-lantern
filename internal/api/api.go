@@ -88,14 +88,24 @@ func (s *Server) computeMetrics() statusMetrics {
 	var relCount int
 	_ = s.database.QueryRow("SELECT COUNT(*) FROM releases WHERE gone_at IS NULL").Scan(&relCount)
 
-	var mCount, sCount, oCount int
+	var mCount, sCount int
 	_ = s.database.QueryRow(`
 		SELECT
 			COALESCE(SUM(CASE WHEN type = 'movie' THEN 1 ELSE 0 END), 0),
-			COALESCE(SUM(CASE WHEN type = 'series' THEN 1 ELSE 0 END), 0),
-			COALESCE(SUM(CASE WHEN type NOT IN ('movie', 'series') THEN 1 ELSE 0 END), 0)
+			COALESCE(SUM(CASE WHEN type = 'series' THEN 1 ELSE 0 END), 0)
 		FROM titles
-	`).Scan(&mCount, &sCount, &oCount)
+	`).Scan(&mCount, &sCount)
+
+	var oCount int
+	_ = s.database.QueryRow(`
+		SELECT COUNT(DISTINCT t.id)
+		FROM titles t
+		LEFT JOIN releases r ON r.title_id = t.id AND r.gone_at IS NULL
+		WHERE t.type NOT IN ('movie', 'series')
+		   OR r.category LIKE '%Documentar%' OR r.folder_url LIKE '%Documentar%'
+		   OR r.category LIKE '%Wrestling%' OR r.folder_url LIKE '%Wrestling%'
+		   OR r.category LIKE '%Awards%' OR r.folder_url LIKE '%Awards%'
+	`).Scan(&oCount)
 
 	var dbSize int64
 	dbPath := filepath.Join(s.cfg.DataDir, "lantern.db")
@@ -229,6 +239,63 @@ func (s *Server) handleTitles(w http.ResponseWriter, r *http.Request) {
 	s.handleSearch(w, r)
 }
 
+func buildCategoryConditions(catQuery string) (string, []interface{}) {
+	var orClauses []string
+	var args []interface{}
+
+	subCats := strings.Split(catQuery, ",")
+	for _, raw := range subCats {
+		cat := strings.TrimSpace(raw)
+		if cat == "" || strings.EqualFold(cat, "all") {
+			continue
+		}
+
+		var conds []string
+		seen := make(map[string]bool)
+		addTerm := func(term string) {
+			term = strings.TrimSpace(term)
+			if term == "" || seen[term] {
+				return
+			}
+			seen[term] = true
+			conds = append(conds, "r.category LIKE ? OR r.folder_url LIKE ?")
+			args = append(args, "%"+term+"%", "%"+term+"%")
+		}
+
+		addTerm(cat)
+
+		wildcardTerm := strings.ReplaceAll(cat, " ", "%")
+		if wildcardTerm != cat {
+			addTerm(wildcardTerm)
+		}
+
+		escapedTerm := url.PathEscape(cat)
+		if escapedTerm != cat {
+			addTerm(escapedTerm)
+		}
+
+		// Handle Documentary / Documentaries stem
+		if strings.HasPrefix(strings.ToLower(cat), "documentar") {
+			addTerm("Documentar")
+		}
+
+		// Handle Anime / Cartoons
+		if strings.Contains(strings.ToLower(cat), "anime") || strings.Contains(strings.ToLower(cat), "cartoon") {
+			addTerm("Anime")
+			addTerm("Cartoon")
+		}
+
+		if len(conds) > 0 {
+			orClauses = append(orClauses, "("+strings.Join(conds, " OR ")+")")
+		}
+	}
+
+	if len(orClauses) == 0 {
+		return "", nil
+	}
+	return " AND (" + strings.Join(orClauses, " OR ") + ")", args
+}
+
 func (s *Server) handleSearch(w http.ResponseWriter, r *http.Request) {
 	query := strings.TrimSpace(r.URL.Query().Get("q"))
 	normQuery := parser.NormalizeTitle(query)
@@ -277,10 +344,13 @@ func (s *Server) handleSearch(w http.ResponseWriter, r *http.Request) {
 			countArgs = append(countArgs, reqType)
 		}
 		if category != "" && category != "All" {
-			whereClause += " AND (r.category LIKE ? OR r.folder_url LIKE ?)"
-			args = append(args, "%"+category+"%", "%"+category+"%")
-			countArgs = append(countArgs, "%"+category+"%", "%"+category+"%")
-			needReleaseJoin = true
+			catClause, catArgs := buildCategoryConditions(category)
+			if catClause != "" {
+				whereClause += catClause
+				args = append(args, catArgs...)
+				countArgs = append(countArgs, catArgs...)
+				needReleaseJoin = true
+			}
 		}
 		if yearParam != "" && yearParam != "All" {
 			if strings.Contains(yearParam, "-") {

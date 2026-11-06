@@ -16,7 +16,7 @@ var (
 	hdrRegex       = regexp.MustCompile(`(?i)\b(hdr10\+?|hdr10|hdr|dv|dolby\s*vision)\b|\bhdr10\+`)
 	seasonNumRegex = regexp.MustCompile(`(?i)\bseason\s*(\d+)\b`)
 	episodeRegex   = regexp.MustCompile(`(?i)\bs?(\d{1,2})[ex](\d{1,3})\b`)
-	titleYearRegex = regexp.MustCompile(`^(.+?)\s*\((?:TV\s*(?:Mini\s*)?Series\s*)?(\d{4})`)
+	titleYearRegex = regexp.MustCompile(`^(.+?)\s*\((?:(?:TV\s*)?(?:Mini\s*Series|Series|Documentary|Cartoon)\s*)?(\d{4})`)
 	multiSpace     = regexp.MustCompile(`\s+`)
 )
 
@@ -48,7 +48,8 @@ func NormalizeTitle(s string) string {
 // ParseFolderMetadata extracts title, year, resolution, source, and HDR from a title directory name
 func ParseFolderMetadata(folderName string) ParsedMetadata {
 	itemType := "movie"
-	if strings.Contains(strings.ToLower(folderName), "tv series") || strings.Contains(strings.ToLower(folderName), "mini series") {
+	lower := strings.ToLower(folderName)
+	if strings.Contains(lower, "tv series") || strings.Contains(lower, "mini series") || strings.Contains(lower, "tv cartoon") || strings.Contains(lower, "tv documentary") {
 		itemType = "series"
 	}
 

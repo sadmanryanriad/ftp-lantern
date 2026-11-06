@@ -166,7 +166,7 @@
       } else if (activeTab === 'series') {
         filterType = 'series';
       } else if (activeTab === 'anime') {
-        if (!filterCategory) filterCategory = 'Anime & Cartoons';
+        if (!filterCategory) filterCategory = 'Animation Movies,Anime & Cartoons';
       } else if (activeTab === 'documentary') {
         if (!filterCategory) filterCategory = 'Documentaries';
       } else if (activeTab === 'following') {

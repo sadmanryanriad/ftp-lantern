@@ -286,3 +286,46 @@ func TestSearchAPIEnhancementsAndFiles(t *testing.T) {
 		t.Errorf("expected file_url http://172.16.50.12/dexter/1.mkv, got %s", item.Files[0].FileURL)
 	}
 }
+
+func TestCategorySearchMultiAndStems(t *testing.T) {
+	_, mux, database := setupTestServer(t)
+	defer database.Close()
+
+	// Seed: Animation Movie, Anime Series, Documentary
+	r1, _ := database.Exec(`INSERT INTO titles (name, name_norm, year, type) VALUES ('Spirited Away', 'spiritedaway', 2001, 'movie')`)
+	t1, _ := r1.LastInsertId()
+	_, _ = database.Exec(`INSERT INTO releases (title_id, category, folder_url, folder_name) VALUES (?, 'Animation Movies', 'http://test/Animation%20Movies/spirited/', 'Spirited Away')`, t1)
+
+	r2, _ := database.Exec(`INSERT INTO titles (name, name_norm, year, type) VALUES ('Naruto', 'naruto', 2002, 'series')`)
+	t2, _ := r2.LastInsertId()
+	_, _ = database.Exec(`INSERT INTO releases (title_id, category, folder_url, folder_name) VALUES (?, 'Anime & Cartoons', 'http://test/Anime%20%26%20Cartoon/naruto/', 'Naruto')`, t2)
+
+	r3, _ := database.Exec(`INSERT INTO titles (name, name_norm, year, type) VALUES ('13th', '13th', 2016, 'series')`)
+	t3, _ := r3.LastInsertId()
+	_, _ = database.Exec(`INSERT INTO releases (title_id, category, folder_url, folder_name) VALUES (?, 'Documentaries', 'http://172.16.50.10/DHAKA-FLIX-10/Documentary/13th/', '13th')`, t3)
+
+	type SearchResponse struct {
+		Total   int         `json:"total"`
+		Results []TitleCard `json:"results"`
+	}
+
+	// 1. Query combined categories: Animation Movies,Anime & Cartoons
+	req := httptest.NewRequest("GET", "/api/search?category=Animation%20Movies,Anime%20%26%20Cartoons", nil)
+	rec := httptest.NewRecorder()
+	mux.ServeHTTP(rec, req)
+	var resp SearchResponse
+	_ = json.NewDecoder(rec.Body).Decode(&resp)
+	if resp.Total != 2 {
+		t.Errorf("expected 2 combined anime/animation titles, got %d", resp.Total)
+	}
+
+	// 2. Query Documentary matching /Documentary/ stem
+	reqDoc := httptest.NewRequest("GET", "/api/search?category=Documentaries", nil)
+	recDoc := httptest.NewRecorder()
+	mux.ServeHTTP(recDoc, reqDoc)
+	var respDoc SearchResponse
+	_ = json.NewDecoder(recDoc.Body).Decode(&respDoc)
+	if respDoc.Total != 1 {
+		t.Errorf("expected 1 documentary title, got %d", respDoc.Total)
+	}
+}

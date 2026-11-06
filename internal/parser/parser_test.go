@@ -45,6 +45,30 @@ func TestParseFolderMetadata(t *testing.T) {
 			source: "BLURAY",
 			hasHDR: true,
 		},
+		{
+			input:  "13th (TV Documentary 2016) 720p WEBRip",
+			title:  "13th",
+			year:   2016,
+			res:    "720p",
+			source: "WEBRIP",
+			hasHDR: false,
+		},
+		{
+			input:  "A Certain Magical Index (TV Cartoon 2008–2019) 1080p [Dual Audio]",
+			title:  "A Certain Magical Index",
+			year:   2008,
+			res:    "1080p",
+			source: "Unknown",
+			hasHDR: false,
+		},
+		{
+			input:  "World's Most Wanted (TV Documentary 2020-) 720p",
+			title:  "World's Most Wanted",
+			year:   2020,
+			res:    "720p",
+			source: "Unknown",
+			hasHDR: false,
+		},
 	}
 
 	for _, c := range cases {
