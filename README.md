@@ -8,7 +8,7 @@
 [![Docker Image](https://img.shields.io/badge/Image%20Size-~20MB-blue.svg?logo=docker)](https://hub.docker.com)
 [![RAM Target](https://img.shields.io/badge/RAM%20Usage-%3C30MB-brightgreen.svg)](#performance--resource-discipline)
 
-FTP-Lantern indexes ISP HTTP media directories (such as Dhaka-FLIX, SamOnline, CircleFTP), extracts clean metadata (titles, years, resolution badges like 1080p / 720p / 4K, audio tags), caches poster thumbnails, provides sub-millisecond full-text search with typo tolerance, and generates 1-click native player streams (PotPlayer / VLC on Windows, VLC / MX Player on Android) with watch-history tracking and Telegram alerts for new uploads.
+FTP-Lantern indexes ISP HTTP media directories (such as Dhaka-FLIX, SamOnline, CircleFTP), extracts clean metadata (titles, years, resolution badges like 1080p / 720p / 4K, audio tags), caches poster thumbnails, provides sub-millisecond full-text search with typo tolerance, and generates 1-click native player streams (MPV / VLC on Windows, VLC / MPV / MX Player on Android) with watch-history tracking and Telegram alerts for new uploads.
 
 ---
 
@@ -18,7 +18,7 @@ FTP-Lantern indexes ISP HTTP media directories (such as Dhaka-FLIX, SamOnline, C
 - **Resource Discipline:** Single static Go binary with an embedded Svelte 5 single-page application. Runs inside a `< 25 MB` minimal container using `< 30 MB` RAM.
 - **Instant Search:** SQLite FTS5 trigram full-text search with parameterized `LIKE` acceleration and sliding-window Levenshtein typo fallback (< 3ms query response).
 - **1-Click Native Streaming:**
-  - **Windows Desktop:** Continuous full-season auto-next playlists (`.m3u`) launching PotPlayer or VLC with a single click.
+  - **Windows Desktop:** 1-Click native launch in MPV (`mpv://`) and VLC (`vlc://`), plus continuous full-season auto-next playlists (`.m3u`).
   - **Android:** Native player launch via standard `intent://` URIs with `navigator.sendBeacon()` background play tracking.
 - **Smart Incremental Crawler:** 
   - Direct children mtime inspection catches new titles and new seasons of cold shows for free in `< 200 ms`.
@@ -54,7 +54,7 @@ ISP BDIX Server (172.16.50.12/DHAKA-FLIX-12/...)
 └──────────────────────────────────────────────────────┴────────────────────────┴──┘
           │
           ├─► Android Devices: intent://... (navigator.sendBeacon() play tracking)
-          ├─► Windows Desktops: /play/season/:id.m3u (Direct stream in PotPlayer / VLC)
+          ├─► Windows Desktops: mpv:// (Direct 1-Click Launch) or /play/season/:id.m3u in MPV / VLC
           ├─► Telegram Client: Rich HTML alerts (escaped) + bot commands (/turbo, /status)
           └─► "Continue Watching": "Last played: S01E04 → Next: S01E05" + manual mark
 ```
@@ -103,14 +103,12 @@ Access the dashboard at `http://<YOUR_HOST_IP>:8085`.
 
 ## 🎮 Native Player Setup
 
-### Windows (PotPlayer / VLC)
-1. In Chrome, Edge, or Firefox, click the **"Play Season in PotPlayer/VLC"** button on any show.
-2. In the browser download bar, right-click the `.m3u` file and select **"Always open files of this type"**.
-3. Choose **PotPlayer** or **VLC** as your default player for `.m3u` files.
-4. Single-clicking "Play" or "Play Season" will now launch your media player immediately with full-season playlist and auto-next support!
+### Windows (MPV / VLC)
+- **Direct 1-Click MPV Launch:** Clicking **MPV** calls `mpv://<stream_url>`. Once the `mpv://` protocol handler is registered in Windows, clicking the button instantly opens MPV and starts streaming immediately.
+- **Season / Series Playlists:** Click **"Play Season (.m3u)"** or **"Play All Seasons (.m3u)"** to load full playlists with auto-next and `F8` playlist view in MPV or VLC.
 
-### Android (VLC / MX Player / Just Player)
-Tapping any episode's play button triggers an Android `intent://` URI. Android will automatically open your default video player (VLC or MX Player) and stream the file directly over local broadband Wi-Fi.
+### Android (VLC / MPV-Android / MX Player / Just Player)
+Tapping any episode's play button triggers an Android `intent://` URI. Android will automatically prompt to open your default video player (MPV or VLC) and stream the file directly over local broadband Wi-Fi.
 
 ---
 

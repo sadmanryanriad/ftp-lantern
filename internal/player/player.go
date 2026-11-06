@@ -18,7 +18,7 @@ type PlayableFile struct {
 	EpNumber     int
 }
 
-// BuildSeasonPlaylist creates a formatted UTF-8 M3U playlist for continuous auto-next in VLC / PotPlayer
+// BuildSeasonPlaylist creates a formatted UTF-8 M3U playlist for continuous auto-next in VLC / MPV
 func BuildSeasonPlaylist(titleName string, files []PlayableFile) string {
 	// Sort by SeasonNumber and EpNumber
 	sort.Slice(files, func(i, j int) bool {

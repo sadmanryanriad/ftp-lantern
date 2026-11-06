@@ -233,26 +233,11 @@ export async function copyToClipboard(text: string): Promise<boolean> {
 export function playOnMPV(streamUrl: string, fileId?: number): void {
   if (fileId) recordPlay(fileId);
 
-  // 1. Copy direct mpv CLI command to clipboard automatically
+  // 1. Copy direct mpv CLI command to clipboard automatically as a handy backup
   copyToClipboard(getMPVCommand(streamUrl));
 
-  // 2. Download 1-click .m3u playlist (opens MPV directly if associated with .m3u)
-  if (fileId) {
-    downloadM3U(`/play/file/${fileId}.m3u`);
-  }
-
-  // 3. Trigger native mpv:// protocol handler if registered
-  try {
-    const iframe = document.createElement('iframe');
-    iframe.style.display = 'none';
-    iframe.src = `mpv://${streamUrl}`;
-    document.body.appendChild(iframe);
-    setTimeout(() => {
-      document.body.removeChild(iframe);
-    }, 1500);
-  } catch {
-    // Protocol handler not registered
-  }
+  // 2. Direct 1-Click Launch via native mpv:// protocol handler (exactly like potplayer://)
+  window.location.href = `mpv://${streamUrl}`;
 }
 
 export function getMPVCommand(streamUrl: string): string {
@@ -310,14 +295,6 @@ export function playOnAndroid(fileId: number, streamUrl: string, titleName?: str
   if (fileId) recordPlay(fileId);
   const intent = getAndroidIntentUrl(streamUrl, titleName);
   window.location.href = intent;
-}
-
-export function playOnPotPlayer(streamUrl: string, fileId?: number): void {
-  if (fileId) {
-    recordPlay(fileId);
-  }
-  // Native PotPlayer URI scheme
-  window.location.href = `potplayer://${streamUrl}`;
 }
 
 export function playOnVLC(streamUrl: string, fileId?: number): void {

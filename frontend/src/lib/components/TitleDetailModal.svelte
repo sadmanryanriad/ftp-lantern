@@ -24,7 +24,6 @@
     playOnMPV,
     getMPVCommand,
     copyToClipboard,
-    playOnPotPlayer,
     playOnVLC,
     recordPlay,
     toggleFollow,
@@ -465,7 +464,7 @@
                   type="button"
                   onclick={() => handlePlayMPV(ep)}
                   class="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-gradient-to-r from-amber-500/20 to-orange-500/20 hover:from-amber-500/30 hover:to-orange-500/30 text-amber-300 text-xs font-bold border border-amber-500/40 shadow-sm transition-all hover:scale-105 active:scale-95"
-                  title="Direct 1-Click Launch: Auto-copies MPV command & downloads playlist"
+                  title="Direct 1-Click Launch in MPV Player"
                 >
                   {#if mpvLaunchedFileId === ep.id}
                     <Check class="w-3.5 h-3.5 text-emerald-400" />
@@ -485,16 +484,6 @@
                 >
                   <Monitor class="w-3.5 h-3.5 text-orange-400" />
                   <span>VLC</span>
-                </button>
-
-                <!-- 1-Click PotPlayer Launch (Alternative) -->
-                <button
-                  type="button"
-                  onclick={() => playOnPotPlayer(ep.file_url, ep.id)}
-                  class="inline-flex items-center gap-1.5 px-2 py-1.5 rounded-lg bg-zinc-850 hover:bg-zinc-800 text-zinc-300 text-xs font-medium border border-zinc-800 transition-colors"
-                  title="Direct 1-Click Launch in Daum PotPlayer"
-                >
-                  <span>PotPlayer</span>
                 </button>
 
                 <!-- In-Browser Video Preview -->

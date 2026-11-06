@@ -2,7 +2,7 @@
 
 **FTP-Lantern** is an ultra-lightweight, zero-transcoding media indexing, instant search engine, and native streaming launcher tailored for BDIX ISP HTTP media portals (specifically Dhaka-FLIX on `172.16.50.12`, `14`, `7`, `8`, `9`).
 
-It compiles into a single static Go binary with an embedded Svelte 5 SPA, incrementally mirrors ISP directory trees using HTTP HTML autoindex `Last-Modified` change detection, caches content-hashed poster thumbnails, provides sub-millisecond FTS5 search with typo tolerance, launches direct external streaming (Windows PotPlayer/VLC, Android VLC/MX Player) with zero media proxying, and sends scheduled daily digests as well as instant notifications for followed shows.
+It compiles into a single static Go binary with an embedded Svelte 5 SPA, incrementally mirrors ISP directory trees using HTTP HTML autoindex `Last-Modified` change detection, caches content-hashed poster thumbnails, provides sub-millisecond FTS5 search with typo tolerance, launches direct external streaming (Windows MPV/VLC, Android VLC/MPV/MX Player) with zero media proxying, and sends scheduled daily digests as well as instant notifications for followed shows.
 
 ---
 
@@ -29,12 +29,12 @@ ISP BDIX Server (172.16.50.12, 14, 7, 9 / DHAKA-FLIX-*)
 │                                                      │  Embedded Web UI       │  │
 │                                                      │  (Svelte 5 / Vite SPA) │  │
 │                                                      │  - History API Nav     │  │
-│                                                      │  - PotPlayer / Android │  │
+│                                                      │  - MPV / Android       │  │
 │                                                      │  - Multi-Block Shelves │  │
 │                                                      └────────────────────────┘  │
 └──────────────────────────────────────────────────────────────────────────────────┘
           │
-          ├─► Windows Desktops: potplayer:// (Primary) and vlc:// (Secondary) + M3U playlist fallback
+          ├─► Windows Desktops: mpv:// (Direct 1-Click Launch) or /play/season/:id.m3u in MPV / VLC
           ├─► Android Devices: intent://... direct native player chooser (VLC, MX Player, MPV)
           ├─► Dokploy Volume: ftp-lantern-data:/data (Persists lantern.db across deploys)
           └─► Telegram Client: Daily 08:01 AM digest + Instant episode alerts on Follow + Bot listener
@@ -271,21 +271,22 @@ END;
 ## 7. 1-Click Streaming & Native Player Launchers
 
 ### 7.1 Desktop Playback (Windows)
-- **Primary Launcher — Daum PotPlayer:**
-  - Button launches: `potplayer://http://172.16.50.12/DHAKA-FLIX-12/.../video.mkv`
-  - PotPlayer registers the `potplayer://` URL protocol natively on Windows.
-  - Direct zero-download playback eliminates Chrome's "Insecure download blocked" warning.
+- **Primary Launcher — MPV Player:**
+  - Button launches: `mpv://http://172.16.50.12/DHAKA-FLIX-12/.../video.mkv`
+  - Uses the Windows `mpv://` URL protocol handler to trigger direct zero-download native streaming.
+  - Automatically copies the terminal CLI command (`mpv "http://..."`) to clipboard as a backup.
 - **Secondary Launcher — VLC Media Player:**
-  - Button launches: `vlc://http://172.16.50.12/DHAKA-FLIX-12/.../video.mkv` (requires `vlc-protocol` handler on stock Windows).
-- **M3U Playlist Fallback:**
-  - `GET /play/season/:id.m3u` serves natural `S01E01` UTF-8 playlist with `X-Content-Type-Options: nosniff`.
+  - Button launches: `vlc://http://172.16.50.12/DHAKA-FLIX-12/.../video.mkv`.
+- **M3U Playlist Continuous Streaming:**
+  - `GET /play/season/:id.m3u?season=X` serves full-season playlist with auto-next and `F8` playlist view in MPV / VLC.
+  - `GET /play/series/:id.m3u` serves complete multi-season playlist for binge watching.
 - **Copy Stream URL:** 1-click clipboard copy of the direct HTTP stream link.
 
 ### 7.2 Mobile Playback (Android)
 - Uses Chrome standard Intent URI format:
   `intent://172.16.50.12/.../video.mkv#Intent;action=android.intent.action.VIEW;scheme=http;type=video/*;end`
 - Opens Android's native "Open with" app chooser, allowing direct streaming with VLC, MX Player, MPV, or Nova Video Player.
-- Smartphone displays hide desktop buttons (MPV, VLC, PotPlayer, CLI) to maintain a clean 44px touch-friendly mobile action bar.
+- Smartphone displays hide desktop buttons (MPV, VLC, CLI) to maintain a clean 44px touch-friendly mobile action bar.
 
 ### 7.3 No Watch History Policy
 - Watch history recording is completely disabled per homelab privacy preference.
