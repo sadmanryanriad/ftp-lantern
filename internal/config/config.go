@@ -17,6 +17,7 @@ type Config struct {
 	PublicBaseURL            string
 	TelegramBotToken         string
 	TelegramAdminChatID      int64
+	TelegramEnableListener   bool
 	LogLevel                 string
 }
 
@@ -67,6 +68,7 @@ func Load() *Config {
 		PublicBaseURL:            publicBaseURL,
 		TelegramBotToken:         getEnv("TELEGRAM_BOT_TOKEN", ""),
 		TelegramAdminChatID:      adminChatID,
+		TelegramEnableListener:   getEnv("TELEGRAM_ENABLE_LISTENER", "false") == "true",
 		LogLevel:                 getEnv("LOG_LEVEL", "info"),
 	}
 }

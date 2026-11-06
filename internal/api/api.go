@@ -36,15 +36,16 @@ type statusMetrics struct {
 }
 
 type Server struct {
-	cfg          *config.Config
-	database     *db.DB
-	crawler      *crawler.Crawler
-	thumbsMgr    *thumbs.Manager
-	startTime    time.Time
-	ispConnected atomic.Bool
-	ispLatencyMs atomic.Int64
-	metricsMu    sync.RWMutex
-	metrics      statusMetrics
+	cfg               *config.Config
+	database          *db.DB
+	crawler           *crawler.Crawler
+	thumbsMgr         *thumbs.Manager
+	startTime         time.Time
+	ispConnected      atomic.Bool
+	ispLatencyMs      atomic.Int64
+	metricsMu         sync.RWMutex
+	metrics           statusMetrics
+	lastMetricsUpdate time.Time
 }
 
 func NewServer(cfg *config.Config, database *db.DB, c *crawler.Crawler, tm *thumbs.Manager) *Server {
@@ -57,66 +58,75 @@ func NewServer(cfg *config.Config, database *db.DB, c *crawler.Crawler, tm *thum
 	}
 	s.ispConnected.Store(true) // Optimistically true on start
 	go s.startIspHealthChecker()
-	go s.startMetricsUpdater()
 	return s
 }
 
-func (s *Server) startMetricsUpdater() {
-	update := func() {
-		tCount, _ := s.database.TitleCount()
-		fCount, _ := s.database.FileCount()
+func (s *Server) getMetrics() statusMetrics {
+	s.metricsMu.RLock()
+	if !s.lastMetricsUpdate.IsZero() && time.Since(s.lastMetricsUpdate) < 15*time.Second {
+		m := s.metrics
+		s.metricsMu.RUnlock()
+		return m
+	}
+	s.metricsMu.RUnlock()
 
-		var relCount int
-		_ = s.database.QueryRow("SELECT COUNT(*) FROM releases WHERE gone_at IS NULL").Scan(&relCount)
-
-		var mCount, sCount, oCount int
-		_ = s.database.QueryRow(`
-			SELECT
-				COALESCE(SUM(CASE WHEN type = 'movie' THEN 1 ELSE 0 END), 0),
-				COALESCE(SUM(CASE WHEN type = 'series' THEN 1 ELSE 0 END), 0),
-				COALESCE(SUM(CASE WHEN type NOT IN ('movie', 'series') THEN 1 ELSE 0 END), 0)
-			FROM titles
-		`).Scan(&mCount, &sCount, &oCount)
-
-		var dbSize int64
-		dbPath := filepath.Join(s.cfg.DataDir, "lantern.db")
-		if fi, err := os.Stat(dbPath); err == nil {
-			dbSize += fi.Size()
-		}
-		if fi, err := os.Stat(dbPath + "-wal"); err == nil {
-			dbSize += fi.Size()
-		}
-		if fi, err := os.Stat(dbPath + "-shm"); err == nil {
-			dbSize += fi.Size()
-		}
-
-		var thumbsSize int64
-		if entries, err := os.ReadDir(s.cfg.ThumbsDir); err == nil {
-			for _, e := range entries {
-				if fi, err := e.Info(); err == nil {
-					thumbsSize += fi.Size()
-				}
-			}
-		}
-
-		s.metricsMu.Lock()
-		s.metrics = statusMetrics{
-			titleCount:      tCount,
-			fileCount:       fCount,
-			releaseCount:    relCount,
-			moviesCount:     mCount,
-			seriesCount:     sCount,
-			othersCount:     oCount,
-			dbSizeBytes:     dbSize,
-			thumbsSizeBytes: thumbsSize,
-		}
-		s.metricsMu.Unlock()
+	s.metricsMu.Lock()
+	defer s.metricsMu.Unlock()
+	if !s.lastMetricsUpdate.IsZero() && time.Since(s.lastMetricsUpdate) < 15*time.Second {
+		return s.metrics
 	}
 
-	update()
-	ticker := time.NewTicker(4 * time.Second)
-	for range ticker.C {
-		update()
+	s.metrics = s.computeMetrics()
+	s.lastMetricsUpdate = time.Now()
+	return s.metrics
+}
+
+func (s *Server) computeMetrics() statusMetrics {
+	tCount, _ := s.database.TitleCount()
+	fCount, _ := s.database.FileCount()
+
+	var relCount int
+	_ = s.database.QueryRow("SELECT COUNT(*) FROM releases WHERE gone_at IS NULL").Scan(&relCount)
+
+	var mCount, sCount, oCount int
+	_ = s.database.QueryRow(`
+		SELECT
+			COALESCE(SUM(CASE WHEN type = 'movie' THEN 1 ELSE 0 END), 0),
+			COALESCE(SUM(CASE WHEN type = 'series' THEN 1 ELSE 0 END), 0),
+			COALESCE(SUM(CASE WHEN type NOT IN ('movie', 'series') THEN 1 ELSE 0 END), 0)
+		FROM titles
+	`).Scan(&mCount, &sCount, &oCount)
+
+	var dbSize int64
+	dbPath := filepath.Join(s.cfg.DataDir, "lantern.db")
+	if fi, err := os.Stat(dbPath); err == nil {
+		dbSize += fi.Size()
+	}
+	if fi, err := os.Stat(dbPath + "-wal"); err == nil {
+		dbSize += fi.Size()
+	}
+	if fi, err := os.Stat(dbPath + "-shm"); err == nil {
+		dbSize += fi.Size()
+	}
+
+	var thumbsSize int64
+	if entries, err := os.ReadDir(s.cfg.ThumbsDir); err == nil {
+		for _, e := range entries {
+			if fi, err := e.Info(); err == nil {
+				thumbsSize += fi.Size()
+			}
+		}
+	}
+
+	return statusMetrics{
+		titleCount:      tCount,
+		fileCount:       fCount,
+		releaseCount:    relCount,
+		moviesCount:     mCount,
+		seriesCount:     sCount,
+		othersCount:     oCount,
+		dbSizeBytes:     dbSize,
+		thumbsSizeBytes: thumbsSize,
 	}
 }
 
@@ -146,7 +156,7 @@ func (s *Server) startIspHealthChecker() {
 				}
 			}
 		}
-		time.Sleep(15 * time.Second)
+		time.Sleep(30 * time.Second)
 	}
 }
 
@@ -1047,9 +1057,7 @@ func (s *Server) handleTriggerCrawl(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) handleStatus(w http.ResponseWriter, r *http.Request) {
-	s.metricsMu.RLock()
-	m := s.metrics
-	s.metricsMu.RUnlock()
+	m := s.getMetrics()
 
 	ispConnected := s.ispConnected.Load()
 

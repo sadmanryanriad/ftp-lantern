@@ -49,7 +49,12 @@ func (n *Notifier) Start() {
 		return
 	}
 
-	go n.botListener()
+	if n.cfg.TelegramEnableListener {
+		log.Println("[Notifier] Telegram inbound bot listener enabled")
+		go n.botListener()
+	} else {
+		log.Println("[Notifier] Telegram outbound notifications active (inbound bot listener disabled: homelab owns the bot)")
+	}
 }
 
 func (n *Notifier) Stop() {
