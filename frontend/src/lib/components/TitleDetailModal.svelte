@@ -47,6 +47,7 @@
   let copiedFileId = $state<number | null>(null);
   let copiedIspFileId = $state<number | null>(null);
   let copiedCliFileId = $state<number | null>(null);
+  let copiedPlaylistCli = $state(false);
   let mpvLaunchedFileId = $state<number | null>(null);
   let isFollowing = $state<boolean>(false);
 
@@ -127,6 +128,22 @@
     if (!title) return;
     const seasonId = activeSeason || 1;
     downloadM3U(`/play/season/${title.id}.m3u?season=${seasonId}`);
+  }
+
+  function handlePlaySeries() {
+    if (!title) return;
+    downloadM3U(`/play/series/${title.id}.m3u`);
+  }
+
+  async function copyMPVPlaylistCommand() {
+    if (!title) return;
+    const url = `${window.location.origin}/play/season/${title.id}.m3u?season=${activeSeason || 1}`;
+    const cmd = `mpv "${url}"`;
+    const success = await copyToClipboard(cmd);
+    if (success) {
+      copiedPlaylistCli = true;
+      setTimeout(() => { copiedPlaylistCli = false; }, 2000);
+    }
   }
 
   function handleWindowsPlay(file: MediaFile) {
@@ -257,15 +274,43 @@
 
             <!-- Actions row -->
             <div class="flex flex-wrap items-center gap-2.5 mt-4">
-              <!-- Play Season M3U (Windows) -->
+              <!-- Play Season / Complete Series M3U Playlist (MPV / VLC / Android) -->
               {#if title.type === 'series'}
                 <button
                   type="button"
                   onclick={handlePlaySeason}
                   class="inline-flex items-center gap-2 px-3.5 py-2 rounded-xl bg-amber-500 hover:bg-amber-400 text-zinc-950 font-bold text-xs shadow-md shadow-amber-500/20 transition-all hover:scale-105 active:scale-95"
+                  title="Download single .m3u playlist file for Season {activeSeason} — opens entire season in MPV or VLC with auto-next and full playlist drawer"
                 >
-                  <Monitor class="w-4 h-4" />
-                  <span>Download Season {activeSeason} Playlist (.m3u)</span>
+                  <Play class="w-4 h-4 fill-current" />
+                  <span>Play Season {activeSeason} (.m3u)</span>
+                </button>
+
+                {#if availableSeasons.length > 1}
+                  <button
+                    type="button"
+                    onclick={handlePlaySeries}
+                    class="inline-flex items-center gap-2 px-3.5 py-2 rounded-xl bg-zinc-800 hover:bg-zinc-750 text-amber-300 border border-amber-500/30 font-semibold text-xs shadow-sm transition-all hover:scale-105 active:scale-95"
+                    title="Download complete series playlist (.m3u) across all seasons for continuous binge watching in MPV / VLC"
+                  >
+                    <Tv class="w-3.5 h-3.5 text-amber-400" />
+                    <span>Play All Seasons (.m3u)</span>
+                  </button>
+                {/if}
+
+                <button
+                  type="button"
+                  onclick={copyMPVPlaylistCommand}
+                  class="inline-flex items-center gap-1.5 px-3 py-2 rounded-xl bg-zinc-800/80 hover:bg-zinc-750 text-zinc-300 border border-zinc-700 text-xs font-mono transition-colors shadow-sm"
+                  title="Copy MPV command to launch this playlist directly from terminal"
+                >
+                  {#if copiedPlaylistCli}
+                    <Check class="w-3.5 h-3.5 text-emerald-400" />
+                    <span class="text-emerald-400 font-sans font-semibold">Copied!</span>
+                  {:else}
+                    <Copy class="w-3.5 h-3.5 text-zinc-400" />
+                    <span class="font-sans font-semibold">MPV CLI</span>
+                  {/if}
                 </button>
               {/if}
 

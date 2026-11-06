@@ -172,6 +172,7 @@ func (s *Server) RegisterRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("GET /api/thumbs/{filename}", s.handleServeThumb)
 	mux.HandleFunc("GET /play/file/{file}", s.handleSingleFilePlaylist)
 	mux.HandleFunc("GET /play/season/{season}", s.handleSeasonPlaylist)
+	mux.HandleFunc("GET /play/series/{season}", s.handleSeasonPlaylist)
 	mux.HandleFunc("GET /api/scheduler", s.handleGetScheduler)
 	mux.HandleFunc("POST /api/scheduler/turbo", s.handleSetTurbo)
 	mux.HandleFunc("POST /api/scheduler/frequency", s.handleSetFrequency)
@@ -878,7 +879,11 @@ func (s *Server) handleSeasonPlaylist(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "audio/x-mpegurl; charset=utf-8")
 	w.Header().Set("X-Content-Type-Options", "nosniff")
 	cleanTitleName := strings.ReplaceAll(titleName, `"`, `_`)
-	w.Header().Set("Content-Disposition", fmt.Sprintf("attachment; filename=\"%s - Complete Season.m3u\"", cleanTitleName))
+	if seasonFilter > 0 {
+		w.Header().Set("Content-Disposition", fmt.Sprintf("attachment; filename=\"%s - Season %02d.m3u\"", cleanTitleName, seasonFilter))
+	} else {
+		w.Header().Set("Content-Disposition", fmt.Sprintf("attachment; filename=\"%s - Complete Series.m3u\"", cleanTitleName))
+	}
 	w.Write([]byte(playlist))
 }
 
