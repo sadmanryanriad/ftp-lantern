@@ -470,8 +470,10 @@ func (c *Crawler) crawlTitleFolderContents(sourceServer, categoryName string, it
 
 	// Upsert Title
 	var titleID int64
+	var isNewTitle bool
 	err := c.database.QueryRow("SELECT id FROM titles WHERE name_norm = ? AND year = ?", meta.TitleNorm, meta.Year).Scan(&titleID)
 	if err != nil {
+		isNewTitle = true
 		// Insert Title
 		thumbHash := ""
 		if posterURL != "" {
@@ -514,30 +516,34 @@ func (c *Crawler) crawlTitleFolderContents(sourceServer, categoryName string, it
 		}
 		releaseID, _ = res.LastInsertId()
 
-		// Emit new_title event
-		c.emitEvent("new_title", titleID, releaseID, map[string]interface{}{
-			"title":      meta.Title,
-			"year":       meta.Year,
-			"resolution": meta.Resolution,
-			"category":   categoryName,
-		})
+		// Only emit new_title event if this title was newly inserted into the database!
+		if isNewTitle {
+			c.emitEvent("new_title", titleID, releaseID, map[string]interface{}{
+				"title":      meta.Title,
+				"year":       meta.Year,
+				"resolution": meta.Resolution,
+				"category":   categoryName,
+			})
+		}
 	} else {
 		_, _ = c.database.Exec("UPDATE releases SET last_modified = ?, gone_at = NULL WHERE id = ?", it.LastModified, releaseID)
 	}
 
+	isSeries := meta.Type == "series" || parser.IsSeriesCategory(categoryName)
+
 	// If there are subfolders (Seasons)
 	for _, sub := range subfolders {
 		seasonNum := parser.ParseSeasonNumber(sub.Name)
-		c.crawlSeasonFolder(titleID, releaseID, seasonNum, sub)
+		c.crawlSeasonFolder(titleID, releaseID, seasonNum, sub, isNewTitle, isSeries)
 	}
 
 	// If flat files directly in title folder
 	if len(flatFiles) > 0 {
-		c.ingestFiles(titleID, releaseID, 1, flatFiles)
+		c.ingestFiles(titleID, releaseID, 1, flatFiles, isNewTitle, isSeries)
 	}
 }
 
-func (c *Crawler) crawlSeasonFolder(titleID, releaseID int64, seasonNum int, seasonDir DirItem) {
+func (c *Crawler) crawlSeasonFolder(titleID, releaseID int64, seasonNum int, seasonDir DirItem, isNewTitle, isSeries bool) {
 	files, err := c.FetchDir(seasonDir.URL)
 	if err != nil {
 		log.Printf("[Crawler] Failed to read season folder %s: %v", seasonDir.URL, err)
@@ -554,10 +560,10 @@ func (c *Crawler) crawlSeasonFolder(titleID, releaseID int64, seasonNum int, sea
 		}
 	}
 
-	c.ingestFiles(titleID, releaseID, seasonNum, videoFiles)
+	c.ingestFiles(titleID, releaseID, seasonNum, videoFiles, isNewTitle, isSeries)
 }
 
-func (c *Crawler) ingestFiles(titleID, releaseID int64, seasonNum int, files []DirItem) {
+func (c *Crawler) ingestFiles(titleID, releaseID int64, seasonNum int, files []DirItem, isNewTitle, isSeries bool) {
 	var newFiles []string
 
 	for _, f := range files {
@@ -587,7 +593,9 @@ func (c *Crawler) ingestFiles(titleID, releaseID int64, seasonNum int, files []D
 		}
 	}
 
-	if len(newFiles) > 0 && !c.isSeed {
+	// Only emit new_episodes for EXISTING series with newly discovered files during non-seed crawls
+	// Brand new titles already emitted "new_title", and movies do not have episodes.
+	if len(newFiles) > 0 && !c.isSeed && !isNewTitle && isSeries {
 		c.emitEvent("new_episodes", titleID, releaseID, map[string]interface{}{
 			"season":   seasonNum,
 			"episodes": newFiles,
@@ -657,7 +665,7 @@ func (c *Crawler) crawlHotSet() {
 			if item.IsDir {
 				hasSeasonDirs = true
 				seasonNum := parser.ParseSeasonNumber(item.Name)
-				c.crawlSeasonFolder(it.titleID, it.releaseID, seasonNum, item)
+				c.crawlSeasonFolder(it.titleID, it.releaseID, seasonNum, item, false, true)
 			}
 		}
 
@@ -666,7 +674,7 @@ func (c *Crawler) crawlHotSet() {
 			c.crawlSeasonFolder(it.titleID, it.releaseID, 1, DirItem{
 				Name: "Season 1",
 				URL:  it.folderURL,
-			})
+			}, false, true)
 		}
 	}
 }

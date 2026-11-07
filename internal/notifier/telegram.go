@@ -10,6 +10,7 @@ import (
 	"mime/multipart"
 	"net/http"
 	"os"
+	"sort"
 	"strconv"
 	"strings"
 	"sync"
@@ -72,6 +73,162 @@ type EventRow struct {
 	FolderURL   string
 }
 
+type AggregatedTitleItem struct {
+	TitleID      int64
+	TitleName    string
+	Year         int
+	ThumbHash    string
+	FolderURL    string
+	EventIDs     []int64
+	Resolutions  []string
+	Seasons      []int
+	EpisodeCodes []string
+	Kinds        map[string]bool
+}
+
+func containsString(slice []string, val string) bool {
+	for _, item := range slice {
+		if item == val {
+			return true
+		}
+	}
+	return false
+}
+
+func containsInt(slice []int, val int) bool {
+	for _, item := range slice {
+		if item == val {
+			return true
+		}
+	}
+	return false
+}
+
+func formatSeasons(seasons []int) string {
+	if len(seasons) == 0 {
+		return ""
+	}
+	uniq := make(map[int]bool)
+	var sorted []int
+	for _, s := range seasons {
+		if s > 0 && !uniq[s] {
+			uniq[s] = true
+			sorted = append(sorted, s)
+		}
+	}
+	sort.Ints(sorted)
+	if len(sorted) == 0 {
+		return ""
+	}
+	if len(sorted) == 1 {
+		return fmt.Sprintf("S%02d", sorted[0])
+	}
+	isRange := true
+	for i := 1; i < len(sorted); i++ {
+		if sorted[i] != sorted[i-1]+1 {
+			isRange = false
+			break
+		}
+	}
+	if isRange {
+		return fmt.Sprintf("S%02d-S%02d", sorted[0], sorted[len(sorted)-1])
+	}
+	var parts []string
+	for _, s := range sorted {
+		parts = append(parts, fmt.Sprintf("S%02d", s))
+	}
+	return strings.Join(parts, ", ")
+}
+
+func (n *Notifier) aggregateEventsByTitle(events []EventRow) []*AggregatedTitleItem {
+	var orderedItems []*AggregatedTitleItem
+	itemMap := make(map[int64]*AggregatedTitleItem)
+
+	for _, ev := range events {
+		item, exists := itemMap[ev.TitleID]
+		if !exists {
+			item = &AggregatedTitleItem{
+				TitleID:   ev.TitleID,
+				TitleName: ev.TitleName,
+				Year:      ev.Year,
+				ThumbHash: ev.ThumbHash,
+				FolderURL: ev.FolderURL,
+				Kinds:     make(map[string]bool),
+			}
+			itemMap[ev.TitleID] = item
+			orderedItems = append(orderedItems, item)
+		}
+
+		item.EventIDs = append(item.EventIDs, ev.ID)
+		item.Kinds[ev.Kind] = true
+
+		if item.FolderURL == "" && ev.FolderURL != "" {
+			item.FolderURL = ev.FolderURL
+		}
+		if item.ThumbHash == "" && ev.ThumbHash != "" {
+			item.ThumbHash = ev.ThumbHash
+		}
+
+		var payload map[string]interface{}
+		if err := json.Unmarshal([]byte(ev.PayloadJSON), &payload); err == nil {
+			if res, ok := payload["resolution"].(string); ok && res != "" {
+				if !containsString(item.Resolutions, res) {
+					item.Resolutions = append(item.Resolutions, res)
+				}
+			}
+			if sVal, ok := payload["season"]; ok {
+				var sNum int
+				switch v := sVal.(type) {
+				case float64:
+					sNum = int(v)
+				case int:
+					sNum = v
+				}
+				if sNum > 0 && !containsInt(item.Seasons, sNum) {
+					item.Seasons = append(item.Seasons, sNum)
+				}
+			}
+			if epList, ok := payload["episodes"].([]interface{}); ok {
+				for _, ep := range epList {
+					if epStr, ok := ep.(string); ok && epStr != "" {
+						if !containsString(item.EpisodeCodes, epStr) {
+							item.EpisodeCodes = append(item.EpisodeCodes, epStr)
+						}
+					}
+				}
+			}
+		}
+	}
+
+	return orderedItems
+}
+
+func formatDigestLine(index int, baseURL string, item *AggregatedTitleItem) string {
+	titleName := item.TitleName
+	if item.Year > 0 && !strings.Contains(titleName, fmt.Sprintf("(%d)", item.Year)) {
+		titleName = fmt.Sprintf("%s (%d)", titleName, item.Year)
+	}
+
+	resStr := "1080p"
+	if len(item.Resolutions) > 0 {
+		resStr = strings.Join(item.Resolutions, ", ")
+	}
+
+	line := fmt.Sprintf("%d. <a href=\"%s/#/title/%d\"><b>%s</b></a> — [%s]", index, baseURL, item.TitleID, html.EscapeString(titleName), html.EscapeString(resStr))
+
+	if len(item.Seasons) > 0 {
+		line += fmt.Sprintf(" • <b>%s</b>", formatSeasons(item.Seasons))
+	} else if len(item.EpisodeCodes) > 0 && len(item.EpisodeCodes) <= 3 {
+		line += fmt.Sprintf(" • <b>%s</b>", html.EscapeString(strings.Join(item.EpisodeCodes, ", ")))
+	}
+
+	if item.FolderURL != "" {
+		line += fmt.Sprintf(" • <a href=\"%s\">ISP</a>", html.EscapeString(item.FolderURL))
+	}
+	line += "\n"
+	return line
+}
+
 func (n *Notifier) DispatchEvents() {
 	if n.cfg.TelegramBotToken == "" || n.cfg.TelegramAdminChatID == 0 {
 		return
@@ -84,6 +241,9 @@ func (n *Notifier) DispatchEvents() {
 	}
 	n.mu.Unlock()
 
+	// Clear any stale events older than 48 hours to prevent backlog storms
+	_, _ = n.database.Exec("UPDATE events SET digest_sent_at = CURRENT_TIMESTAMP WHERE digest_sent_at IS NULL AND created_at < datetime('now', '-48 hours')")
+
 	rows, err := n.database.Query(`
 		SELECT e.id, e.kind, e.title_id, t.name, t.year, t.thumb_hash, e.payload_json, COALESCE(r.folder_url, '')
 		FROM events e
@@ -91,7 +251,7 @@ func (n *Notifier) DispatchEvents() {
 		LEFT JOIN releases r ON r.id = e.release_id
 		WHERE e.digest_sent_at IS NULL AND e.failed_at IS NULL
 		ORDER BY e.created_at ASC
-		LIMIT 100
+		LIMIT 150
 	`)
 	if err != nil {
 		return
@@ -121,12 +281,16 @@ func (n *Notifier) DispatchEvents() {
 		return
 	}
 
-	if len(events) <= 2 {
-		for _, ev := range events {
-			n.sendSingleEvent(ev)
-		}
+	// Group and deduplicate events by TitleID
+	items := n.aggregateEventsByTitle(events)
+	if len(items) == 0 {
+		return
+	}
+
+	if len(items) == 1 {
+		n.sendSingleAggregatedTitle(items[0])
 	} else {
-		n.sendBatchDigest(events)
+		n.sendBatchDigest(items)
 	}
 }
 
@@ -184,47 +348,50 @@ func (n *Notifier) DispatchFollowedEvents() {
 	}
 	_ = rows.Close()
 
-	for _, ev := range events {
-		n.sendFollowedInstantAlert(ev)
+	if len(events) == 0 {
+		return
+	}
+
+	// Deduplicate followed items by TitleID so fans don't receive spam photos for every season/file
+	items := n.aggregateEventsByTitle(events)
+	for _, item := range items {
+		n.sendFollowedInstantAlertAggregated(item)
 	}
 }
 
-func (n *Notifier) sendFollowedInstantAlert(ev EventRow) {
-	var payload map[string]interface{}
-	_ = json.Unmarshal([]byte(ev.PayloadJSON), &payload)
-
-	titleName := ev.TitleName
-	if ev.Year > 0 && !strings.Contains(titleName, fmt.Sprintf("(%d)", ev.Year)) {
-		titleName = fmt.Sprintf("%s (%d)", titleName, ev.Year)
+func (n *Notifier) sendFollowedInstantAlertAggregated(item *AggregatedTitleItem) {
+	titleName := item.TitleName
+	if item.Year > 0 && !strings.Contains(titleName, fmt.Sprintf("(%d)", item.Year)) {
+		titleName = fmt.Sprintf("%s (%d)", titleName, item.Year)
 	}
 	titleEsc := html.EscapeString(titleName)
 
 	var epDesc string
-	if eps, ok := payload["episodes"].([]interface{}); ok && len(eps) > 0 {
-		var epCodes []string
-		for _, e := range eps {
-			if s, ok := e.(string); ok {
-				epCodes = append(epCodes, s)
-			}
+	if len(item.EpisodeCodes) > 0 {
+		displayCodes := item.EpisodeCodes
+		if len(displayCodes) > 8 {
+			displayCodes = append(displayCodes[:8], fmt.Sprintf("+%d more", len(displayCodes)-8))
 		}
-		epDesc = fmt.Sprintf("\n⚡ New: <b>%s</b>", html.EscapeString(strings.Join(epCodes, ", ")))
+		epDesc = fmt.Sprintf("\n⚡ New: <b>%s</b>", html.EscapeString(strings.Join(displayCodes, ", ")))
+	} else if len(item.Seasons) > 0 {
+		epDesc = fmt.Sprintf("\n⚡ New: <b>%s</b>", formatSeasons(item.Seasons))
 	}
 
-	res := "1080p"
-	if r, ok := payload["resolution"].(string); ok && r != "" {
-		res = r
+	resStr := "1080p"
+	if len(item.Resolutions) > 0 {
+		resStr = strings.Join(item.Resolutions, ", ")
 	}
 
 	caption := fmt.Sprintf(
 		"🔔 <b>Instant Alert: Followed Content</b>\n📺 <b>%s</b>%s\n🎞 Quality: %s\n🔗 <a href=\"%s/#/title/%d\">Stream Now in FTP-Lantern</a>",
 		titleEsc,
 		epDesc,
-		html.EscapeString(res),
+		html.EscapeString(resStr),
 		n.cfg.PublicBaseURL,
-		ev.TitleID,
+		item.TitleID,
 	)
 
-	thumbPath := n.thumbsMgr.ThumbPath(ev.TitleID, ev.ThumbHash)
+	thumbPath := n.thumbsMgr.ThumbPath(item.TitleID, item.ThumbHash)
 	var err error
 	if _, statErr := os.Stat(thumbPath); statErr == nil {
 		err = n.sendPhoto(thumbPath, caption)
@@ -233,9 +400,13 @@ func (n *Notifier) sendFollowedInstantAlert(ev EventRow) {
 	}
 
 	if err != nil {
-		n.handleError(ev.ID, err)
+		for _, id := range item.EventIDs {
+			n.handleError(id, err)
+		}
 	} else {
-		_, _ = n.database.Exec("UPDATE events SET instant_sent_at = CURRENT_TIMESTAMP, notified_at = CURRENT_TIMESTAMP WHERE id = ?", ev.ID)
+		for _, id := range item.EventIDs {
+			_, _ = n.database.Exec("UPDATE events SET instant_sent_at = CURRENT_TIMESTAMP, notified_at = CURRENT_TIMESTAMP WHERE id = ?", id)
+		}
 	}
 }
 
@@ -243,51 +414,64 @@ func (n *Notifier) DispatchDailyDigest() {
 	n.DispatchEvents()
 }
 
-func (n *Notifier) sendSingleEvent(ev EventRow) {
-	var payload map[string]interface{}
-	_ = json.Unmarshal([]byte(ev.PayloadJSON), &payload)
-
-	titleName := ev.TitleName
-	if ev.Year > 0 && !strings.Contains(titleName, fmt.Sprintf("(%d)", ev.Year)) {
-		titleName = fmt.Sprintf("%s (%d)", titleName, ev.Year)
+func (n *Notifier) sendSingleAggregatedTitle(item *AggregatedTitleItem) {
+	baseURL := strings.TrimRight(n.cfg.PublicBaseURL, "/")
+	titleName := item.TitleName
+	if item.Year > 0 && !strings.Contains(titleName, fmt.Sprintf("(%d)", item.Year)) {
+		titleName = fmt.Sprintf("%s (%d)", titleName, item.Year)
 	}
 	titleEsc := html.EscapeString(titleName)
-	res := "1080p"
-	if r, ok := payload["resolution"].(string); ok && r != "" {
-		res = r
+
+	resStr := "1080p"
+	if len(item.Resolutions) > 0 {
+		resStr = strings.Join(item.Resolutions, ", ")
 	}
 
-	baseURL := strings.TrimRight(n.cfg.PublicBaseURL, "/")
+	qualityDetail := resStr
+	if len(item.Seasons) > 0 {
+		qualityDetail += " • " + formatSeasons(item.Seasons)
+	}
+
+	var epDesc string
+	if len(item.EpisodeCodes) > 0 {
+		displayCodes := item.EpisodeCodes
+		if len(displayCodes) > 6 {
+			displayCodes = append(displayCodes[:6], fmt.Sprintf("+%d more", len(displayCodes)-6))
+		}
+		epDesc = fmt.Sprintf("\n⚡ Episodes: <b>%s</b>", html.EscapeString(strings.Join(displayCodes, ", ")))
+	}
+
 	caption := fmt.Sprintf(
-		"🎬 <b>New Content Added [%s]</b>\n📺 <b><a href=\"%s/#/title/%d\">%s</a></b>\n🎞 Quality: %s\n🔗 <a href=\"%s/#/title/%d\">Open in FTP-Lantern</a>",
-		html.EscapeString(res),
+		"🎬 <b>New Content Added [%s]</b>\n📺 <b><a href=\"%s/#/title/%d\">%s</a></b>%s\n🎞 Quality: %s\n🔗 <a href=\"%s/#/title/%d\">Open in FTP-Lantern</a>",
+		html.EscapeString(resStr),
 		baseURL,
-		ev.TitleID,
+		item.TitleID,
 		titleEsc,
-		html.EscapeString(res),
+		epDesc,
+		html.EscapeString(qualityDetail),
 		baseURL,
-		ev.TitleID,
+		item.TitleID,
 	)
-	if ev.FolderURL != "" {
-		caption += fmt.Sprintf("\n🌐 <a href=\"%s\">Open ISP Folder</a>", html.EscapeString(ev.FolderURL))
+	if item.FolderURL != "" {
+		caption += fmt.Sprintf("\n🌐 <a href=\"%s\">Open ISP Folder</a>", html.EscapeString(item.FolderURL))
 	}
 
 	var rowButtons []map[string]string
 	rowButtons = append(rowButtons, map[string]string{
 		"text": "🔗 Open in FTP-Lantern",
-		"url":  fmt.Sprintf("%s/#/title/%d", baseURL, ev.TitleID),
+		"url":  fmt.Sprintf("%s/#/title/%d", baseURL, item.TitleID),
 	})
-	if ev.FolderURL != "" {
+	if item.FolderURL != "" {
 		rowButtons = append(rowButtons, map[string]string{
 			"text": "🌐 Direct ISP Folder",
-			"url":  ev.FolderURL,
+			"url":  item.FolderURL,
 		})
 	}
 	replyMarkup := map[string]interface{}{
 		"inline_keyboard": [][]map[string]string{rowButtons},
 	}
 
-	thumbPath := n.thumbsMgr.ThumbPath(ev.TitleID, ev.ThumbHash)
+	thumbPath := n.thumbsMgr.ThumbPath(item.TitleID, item.ThumbHash)
 	var err error
 
 	if _, statErr := os.Stat(thumbPath); statErr == nil {
@@ -297,13 +481,17 @@ func (n *Notifier) sendSingleEvent(ev EventRow) {
 	}
 
 	if err != nil {
-		n.handleError(ev.ID, err)
+		for _, id := range item.EventIDs {
+			n.handleError(id, err)
+		}
 	} else {
-		_, _ = n.database.Exec("UPDATE events SET instant_sent_at = CURRENT_TIMESTAMP, notified_at = CURRENT_TIMESTAMP WHERE id = ?", ev.ID)
+		for _, id := range item.EventIDs {
+			_, _ = n.database.Exec("UPDATE events SET digest_sent_at = CURRENT_TIMESTAMP, instant_sent_at = CURRENT_TIMESTAMP, notified_at = CURRENT_TIMESTAMP WHERE id = ?", id)
+		}
 	}
 }
 
-func (n *Notifier) sendBatchDigest(events []EventRow) {
+func (n *Notifier) sendBatchDigest(items []*AggregatedTitleItem) {
 	baseURL := strings.TrimRight(n.cfg.PublicBaseURL, "/")
 	ispSiteURL := ""
 	if len(n.cfg.SourceURLs) > 0 {
@@ -325,48 +513,37 @@ func (n *Notifier) sendBatchDigest(events []EventRow) {
 		"inline_keyboard": inlineKeyboard,
 	}
 
-	totalEvents := len(events)
+	totalTitles := len(items)
 	itemIndex := 0
 
-	for itemIndex < totalEvents {
-		var sb strings.Builder
-		if totalEvents > 30 {
-			sb.WriteString(fmt.Sprintf("🎬 <b>FTP-Lantern — Updates (%d-%d of %d)</b>\n\n", itemIndex+1, min(itemIndex+30, totalEvents), totalEvents))
-		} else {
-			sb.WriteString(fmt.Sprintf("🎬 <b>FTP-Lantern — %d New Updates</b>\n\n", totalEvents))
-		}
+	for itemIndex < totalTitles {
+		chunkStart := itemIndex
+		var chunkLines []string
+		var chunkEventIDs []int64
+		currentLen := 0
 
-		var chunkIDs []int64
-		for itemIndex < totalEvents {
-			ev := events[itemIndex]
-			var payload map[string]interface{}
-			_ = json.Unmarshal([]byte(ev.PayloadJSON), &payload)
-
-			res := "1080p"
-			if r, ok := payload["resolution"].(string); ok && r != "" {
-				res = r
-			}
-
-			titleName := ev.TitleName
-			if ev.Year > 0 && !strings.Contains(titleName, fmt.Sprintf("(%d)", ev.Year)) {
-				titleName = fmt.Sprintf("%s (%d)", titleName, ev.Year)
-			}
-
-			// Numbered list with direct link to http://192.168.0.134:8087/#/title/<id>
-			line := fmt.Sprintf("%d. <a href=\"%s/#/title/%d\"><b>%s</b></a> — [%s]", itemIndex+1, baseURL, ev.TitleID, html.EscapeString(titleName), html.EscapeString(res))
-			if ev.FolderURL != "" {
-				line += fmt.Sprintf(" • <a href=\"%s\">ISP</a>", html.EscapeString(ev.FolderURL))
-			}
-			line += "\n"
-
-			// Check item-boundary character threshold (3500 to leave safety buffer for footer and markup)
-			if sb.Len()+len(line) > 3500 {
+		for itemIndex < totalTitles {
+			item := items[itemIndex]
+			line := formatDigestLine(itemIndex+1, baseURL, item)
+			if len(chunkLines) > 0 && currentLen+len(line) > 3300 {
 				break
 			}
-
-			sb.WriteString(line)
-			chunkIDs = append(chunkIDs, ev.ID)
+			chunkLines = append(chunkLines, line)
+			chunkEventIDs = append(chunkEventIDs, item.EventIDs...)
+			currentLen += len(line)
 			itemIndex++
+		}
+		chunkEnd := itemIndex
+
+		var sb strings.Builder
+		if totalTitles > len(chunkLines) {
+			sb.WriteString(fmt.Sprintf("🎬 <b>FTP-Lantern — Updates (%d-%d of %d)</b>\n\n", chunkStart+1, chunkEnd, totalTitles))
+		} else {
+			sb.WriteString(fmt.Sprintf("🎬 <b>FTP-Lantern — %d New Updates</b>\n\n", totalTitles))
+		}
+
+		for _, l := range chunkLines {
+			sb.WriteString(l)
 		}
 
 		sb.WriteString(fmt.Sprintf("\n🔗 <a href=\"%s\">Open Library</a>", baseURL))
@@ -376,22 +553,18 @@ func (n *Notifier) sendBatchDigest(events []EventRow) {
 
 		err := n.sendMessageWithKeyboard(sb.String(), replyMarkup)
 		if err != nil {
-			log.Printf("[Notifier] Batch digest chunk failed (%v), falling back to single dispatches", err)
-			for _, id := range chunkIDs {
-				for _, ev := range events {
-					if ev.ID == id {
-						n.sendSingleEvent(ev)
-					}
-				}
+			log.Printf("[Notifier] Batch digest chunk failed (%v)", err)
+			for _, id := range chunkEventIDs {
+				n.handleError(id, err)
 			}
 			break
 		} else {
-			for _, id := range chunkIDs {
+			for _, id := range chunkEventIDs {
 				_, _ = n.database.Exec("UPDATE events SET digest_sent_at = CURRENT_TIMESTAMP, notified_at = CURRENT_TIMESTAMP WHERE id = ?", id)
 			}
 		}
 
-		if itemIndex < totalEvents {
+		if itemIndex < totalTitles {
 			time.Sleep(1 * time.Second)
 		}
 	}

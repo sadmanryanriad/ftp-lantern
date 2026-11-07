@@ -45,6 +45,16 @@ func NormalizeTitle(s string) string {
 	return b.String()
 }
 
+// IsSeriesCategory checks if a category name implies episodic TV or series content
+func IsSeriesCategory(cat string) bool {
+	lower := strings.ToLower(cat)
+	return strings.Contains(lower, "series") ||
+		strings.Contains(lower, "tv") ||
+		strings.Contains(lower, "cartoon") ||
+		strings.Contains(lower, "anime") ||
+		strings.Contains(lower, "drama")
+}
+
 // ParseFolderMetadata extracts title, year, resolution, source, and HDR from a title directory name
 func ParseFolderMetadata(folderName string) ParsedMetadata {
 	itemType := "movie"

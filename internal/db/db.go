@@ -162,6 +162,21 @@ func (d *DB) migrate() error {
 	_, _ = d.Exec("CREATE INDEX IF NOT EXISTS idx_releases_title_gone ON releases(title_id, gone_at)")
 	_, _ = d.Exec("CREATE INDEX IF NOT EXISTS idx_files_title_gone_size ON files(title_id, gone_at, file_size_bytes)")
 	_, _ = d.Exec("CREATE INDEX IF NOT EXISTS idx_files_release_gone ON files(release_id, gone_at, last_modified)")
+	_, _ = d.Exec("CREATE INDEX IF NOT EXISTS idx_events_pending_digest ON events(digest_sent_at, failed_at, created_at)")
+	_, _ = d.Exec("CREATE INDEX IF NOT EXISTS idx_events_pending_instant ON events(instant_sent_at, failed_at, created_at)")
+	_, _ = d.Exec("CREATE INDEX IF NOT EXISTS idx_events_title_created ON events(title_id, created_at)")
+
+	// One-time historical backlog purge: mark existing stale seed crawl events as notified
+	if d.GetSetting("backlog_purged_v1", "") != "true" {
+		_, _ = d.Exec("UPDATE events SET digest_sent_at = CURRENT_TIMESTAMP, instant_sent_at = CURRENT_TIMESTAMP WHERE digest_sent_at IS NULL")
+		_ = d.SetSetting("backlog_purged_v1", "true")
+	}
+
+	// Always sync any events that already have notified_at
+	_, _ = d.Exec("UPDATE events SET digest_sent_at = notified_at WHERE digest_sent_at IS NULL AND notified_at IS NOT NULL")
+	// Mark events older than 48 hours as sent to prevent stale replay
+	_, _ = d.Exec("UPDATE events SET digest_sent_at = CURRENT_TIMESTAMP WHERE digest_sent_at IS NULL AND created_at < datetime('now', '-48 hours')")
+
 
 	return nil
 }
